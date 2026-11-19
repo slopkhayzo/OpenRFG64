@@ -9,6 +9,7 @@
 
 #include "keen/base/memorysystem.hpp"
 #include "keen/base/trace.hpp"
+#include "scaling/scaling.h" // scaling
 #include "library/modules/runtime/base/sources/global/memorylayout.hpp"
 
 #include <string.h>
@@ -86,12 +87,31 @@ namespace keen
                 MemoryBlock* pBlock = &pMemorySystem->memoryLayout.memoryBlocks[i];
                 if (pBlock->pStart != nullptr)
                 {
-                    VirtualFree(pBlock->pStart, 0, MEM_RELEASE);
+                    // scaling (OpenRFG64-memtest): level memory shares a reservation with Havok's heap
+                    // (memorylayout_win32.cpp); it is not released apart (the process ends after this).
+                    if (!scaling_contains(pBlock->pStart))
+                    {
+                        VirtualFree(pBlock->pStart, 0, MEM_RELEASE);
+                    }
                     pBlock->pStart = nullptr;
                     pBlock->size = 0;
                 }
             }
             s_pMemorySystem = nullptr;
+        }
+
+        // memtest (OpenRFG64-memtest): a block of the layout and its name, for the census (false past the last one or
+        // before the layout exists).
+        bool memtestLayoutBlock(uint32 index, const void** pStart, uint64* size, const char** pName)
+        {
+            if (s_pMemorySystem == nullptr || index >= s_pMemorySystem->memoryLayout.memoryBlockCount)
+            {
+                return false;
+            }
+            *pStart = s_pMemorySystem->memoryLayout.memoryBlocks[index].pStart;
+            *size = s_pMemorySystem->memoryLayout.memoryBlocks[index].size;
+            *pName = s_pMemorySystem->layoutDefinition.pBlockDefinitions[index].pDescription;
+            return true;
         }
 
         // 0x00C087D0

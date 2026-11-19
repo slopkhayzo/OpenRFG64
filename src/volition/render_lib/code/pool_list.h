@@ -23,6 +23,7 @@ public:
     void init(T* data_ptr, int size, int num_existing_elements); // <rl_light*> 0x00502990 (.h:67)
     void init_mempool(mempool_base&, int);
     void init_dynamic(int count); // <rl_light*> 0x005029D0 (.h:80)
+    void grow_dynamic(int new_capacity); // scaling (OpenRFG64-memtest, new): a bigger array, the elements copied
     const T& operator[](unsigned int) const;
     T& operator[](unsigned int);
     const T& operator[](int) const;

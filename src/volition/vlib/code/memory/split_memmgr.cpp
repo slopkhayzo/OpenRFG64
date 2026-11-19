@@ -17,6 +17,7 @@
 // - space_free does not count alignment padding inside large blocks.
 
 #include "volition/vlib/code/memory/split_memmgr.h"
+#include "scaling/scaling.h" // scaling
 
 #include "volition/vlib/code/memory/vmemory.h"
 
@@ -96,7 +97,10 @@ void split_memmgr::init(void* phys_buf, unsigned int size, int num_tiny_buckets,
             const tiny_bucket_info& info = tiny_buckets_init[i];
             tiny_bucket* const bucket = &buckets[i];
             new (&bucket->tiny_pool) split_page_mempool();
-            bucket->tiny_buf = (unsigned char*)phys_buf + size - info.size - total_tiny_space;
+            // scaling (OpenRFG64-memtest): in a grow-on-demand region the tiny buckets come first, so that what is used
+            // stays together near the region's start (self-relative links to the game's other memory stay within 2 GB).
+            bucket->tiny_buf = scaling_contains(phys_buf) ? (unsigned char*)phys_buf + total_tiny_space
+                                                          : (unsigned char*)phys_buf + size - info.size - total_tiny_space;
             total_tiny_space += info.size;
             bucket->tiny_size = info.size;
             bucket->tiny_page_size = info.page_size;
@@ -126,8 +130,9 @@ void split_memmgr::init(void* phys_buf, unsigned int size, int num_tiny_buckets,
     const unsigned int large_size = size - total_tiny_space;
     tree_root->info.size = large_size;
     tree_root->info.usable_size = large_size;
-    tree_root->mem_base = (char*)phys_buf;
-    tree_root->mem_aligned = (char*)phys_buf;
+    char* const large_base = scaling_contains(phys_buf) ? (char*)phys_buf + total_tiny_space : (char*)phys_buf; // scaling
+    tree_root->mem_base = large_base;
+    tree_root->mem_aligned = large_base;
     tree_root->info.requested_size = 0;
     tree_root->prev = nullptr;
     tree_root->next = nullptr;
@@ -254,6 +259,7 @@ void* split_memmgr::alloc(unsigned int size, const char* debug_name, unsigned in
     mem_requested += size;
     mem_used += blk->info.size;
     blk->info.usable_size = (unsigned int)(blk->mem_base + blk->info.size - mem);
+    scaling_commit(blk->mem_base, blk->info.size); // scaling: a region's memory before anything (a file read) writes it
     if (debug_name == nullptr)
     {
         debug_name = "untracked";
@@ -324,8 +330,9 @@ void split_memmgr::clear()
     tree_root->left = nullptr;
     tree_root->right = nullptr;
     tree_root->track = nullptr;
-    tree_root->mem_base = (char*)mem_base;
-    tree_root->mem_aligned = (char*)mem_base;
+    char* const large_base = scaling_contains(mem_base) ? (char*)mem_base + total_tiny_space : (char*)mem_base; // scaling
+    tree_root->mem_base = large_base;
+    tree_root->mem_aligned = large_base;
     last_free = tree_root;
     cached_query = nullptr;
     cs.leave();

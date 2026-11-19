@@ -14,8 +14,12 @@
 #pragma once
 
 #include "volition/vlib/code/os/cs_wrapper.h"
+#include "scaling/scaling.h" // scaling
+
+#include <type_traits>
 
 class mempool_base;
+class object; // scaling: world objects' pools do not grow yet (the world's lists are sized from their classes)
 
 // One circular list of objects, by index. Placement inferred.
 // size 0x8
@@ -25,12 +29,13 @@ struct index_list
     int count; // 0x04
 };
 
-// Placement inferred.
-// size 0x4
+// Placement inferred. scaling (OpenRFG64-memtest): 32-bit links instead of the game's two 16-bit fields, so a pool can
+// grow past 65,535 objects.
+// size 0x8 (0x4 in rfg.exe)
 struct index_link
 {
-    unsigned int prev : 16; // 0x00:0
-    unsigned int next : 16; // 0x00:16
+    unsigned int prev; // 0x00
+    unsigned int next; // 0x04
 };
 
 // size 0x20
@@ -51,6 +56,10 @@ public:
     int get_category(int) const;
     object_pool_server(void (T::*init)(), void (T::*release)()); // <split_memblk> 0x00595DB0 (object_pool.inl:12)
     unsigned int bytes_allocated() const;
+    // scaling (OpenRFG64-memtest): storage in a reserved region of `reserve` objects, num_objects of them made now and
+    // more as the pool runs low (grab); object_pool's constructor decides (scaling_pool_reserve).
+    void init_growable(void* region, unsigned int num_objects, unsigned int reserve);
+    const char* pool_name; // scaling: the pool's type and size for the census (object_pool's __FUNCSIG__), or null
 protected:
     void remove(index_list& list, int index); // <split_memblk> 0x00596730 (object_pool.inl:67)
     void append(index_list& list, int index); // <split_memblk> 0x00596760 (object_pool.inl:87)
@@ -67,6 +76,14 @@ private:
     void (T::*release_cb)(); // 0x10
     unsigned int max_capacity; // 0x14
     index_list avail; // 0x18
+
+    // scaling (OpenRFG64-memtest)
+    void construct(unsigned int count);
+    bool grow();
+    unsigned int reserve_capacity; // the region's room in objects; 0: the game's fixed storage
+    unsigned int grow_step;
+    unsigned int low_water; // fewer free objects than this: the pool grows (checks for room before creating)
+    bool exhausted_reported;
 };
 
 // size 0x10 + 0xC * K, rounded up to the 8-byte alignment of thread_access, + 8

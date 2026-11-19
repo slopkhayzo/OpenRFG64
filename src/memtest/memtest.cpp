@@ -8,6 +8,8 @@
 //   memtest_summary.txt  peaks and what filled first; rewritten every 10 s, so a crash leaves the latest
 
 #include "memtest/memtest.h"
+#include "scaling/scaling.h"
+#include "volition/rfg/code/havok/havok_memory.h"
 
 // The game's headers first, then windows.h (OpenRFG's order: winsock2 must come before any windows.h).
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/system/hkmemorysystem.h"
@@ -33,6 +35,15 @@
 #include <string.h>
 
 #pragma comment(lib, "psapi.lib")
+
+namespace keen
+{
+    namespace memory
+    {
+        // memorysystem.cpp: a block of the layout and its name.
+        bool memtestLayoutBlock(unsigned int index, const void** pStart, unsigned long long* size, const char** pName);
+    }
+}
 
 namespace
 {
@@ -548,6 +559,10 @@ namespace
                 {
                     *total = e.m_allocatorStats.m_totalAvailable;
                 }
+                if (havok_memory_heap_page_limit() > 0) // scaling: the heap grows in pages up to this
+                {
+                    *total = havok_memory_heap_page_limit();
+                }
             }
             else if (i == 3)
             {
@@ -562,6 +577,8 @@ namespace
     }
 
     void write_summary(const char* reason);
+    unsigned long long scaling_committed_total();
+    const char* pool_label(const char* name, char* out, size_t size);
 
     void census()
     {
@@ -730,10 +747,13 @@ namespace
             fprintf(Csv, ",%.1f,%.1f,%.1f,%.1f,%ld,%d,%d,%d,%d,%d,%d", mb(level_used), mb(Peak_level), mb(Level_size), mb(level_largest),
                     Level_failures, cm_models, openrfg_max_collision_models(), movers, openrfg_general_movers_capacity(), zone_handles, zones);
             // the debris (memtest_debris.cpp)
-            fprintf(Csv, ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%.1f,%.1f,%u,%u,%u\n", dc.render_instances, dc.render_instances_max, dc.zone_free,
+            fprintf(Csv, ",%d,%d,%d,%u,%u,%u,%u,%u,%u,%u,%.1f,%.1f,%u,%u,%u", dc.render_instances, dc.render_instances_max, dc.zone_free,
                     dc.kept, dc.gated, dc.fades_blocked, dc.vaporize_refused, dc.recycled, dc.stream_skips, dc.blasts,
                     mb((unsigned long long)Havok_system_used), mb((unsigned long long)Havok_solver_used), dc.island_trims, dc.bodies_trimmed,
                     dc.havok_low_memory);
+            // the grow-on-demand memory (src/scaling)
+            fprintf(Csv, ",%.1f,%.1f,%u\n", mb(scaling_committed_total()), mb((unsigned long long)havok_memory_heap_page_bytes(nullptr)),
+                    scaling_fault_count());
             fflush(Csv);
         }
     }
@@ -765,6 +785,325 @@ namespace
         const double fx = x->size ? (double)x->peak_seen / x->size : 0.0;
         const double fy = y->size ? (double)y->peak_seen / y->size : 0.0;
         return fx < fy ? 1 : fx > fy ? -1 : 0;
+    }
+
+    // ---- the grow-on-demand memory (src/scaling)
+    unsigned long long scaling_committed_total()
+    {
+        unsigned long long total = 0;
+        scaling_region_info info;
+        for (int i = 0; scaling_region(i, &info); i++)
+        {
+            total += info.committed;
+        }
+        return total;
+    }
+
+    // ---- far-offset census: each new entry of the far table (endian_type.inl), by the memory area of the field that
+    // needed it and of its target: a scaling region, a layout block, the program's image, or another system allocation.
+    struct far_area
+    {
+        int kind; // 0 none, 1 scaling region, 2 layout block, 3 a module's image, 4 another allocation
+        unsigned long long id;
+    };
+    struct far_pair
+    {
+        far_area field;
+        far_area target;
+        unsigned int count;
+        const void* first_field;
+        const void* first_target;
+    };
+    far_pair Far_pairs[64];
+    int Far_pair_count;
+    unsigned int Far_unsorted;
+
+    far_area far_area_of(const void* p)
+    {
+        far_area a = {0, 0};
+        if (p == nullptr)
+        {
+            return a;
+        }
+        scaling_region_info info;
+        for (int i = 0; scaling_region(i, &info); i++)
+        {
+            if ((const char*)p >= (const char*)info.base && (const char*)p < (const char*)info.base + info.reserved)
+            {
+                a.kind = 1;
+                a.id = (unsigned long long)i;
+                return a;
+            }
+        }
+        const void* start = nullptr;
+        unsigned long long size = 0;
+        const char* name = nullptr;
+        for (unsigned int i = 0; keen::memory::memtestLayoutBlock(i, &start, &size, &name); i++)
+        {
+            if (start != nullptr && (const char*)p >= (const char*)start && (const char*)p < (const char*)start + size)
+            {
+                a.kind = 2;
+                a.id = i;
+                return a;
+            }
+        }
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery(p, &mbi, sizeof(mbi)) == 0)
+        {
+            return a;
+        }
+        a.kind = mbi.Type == MEM_IMAGE ? 3 : 4;
+        a.id = (unsigned long long)mbi.AllocationBase;
+        return a;
+    }
+
+    // Under the far table's lock.
+    void note_far_entry(const void* field, const void* target)
+    {
+        const far_area f = far_area_of(field);
+        const far_area t = far_area_of(target);
+        for (int i = 0; i < Far_pair_count; i++)
+        {
+            far_pair& p = Far_pairs[i];
+            if (p.field.kind == f.kind && p.field.id == f.id && p.target.kind == t.kind && p.target.id == t.id)
+            {
+                p.count++;
+                return;
+            }
+        }
+        if (Far_pair_count < (int)(sizeof(Far_pairs) / sizeof(Far_pairs[0])))
+        {
+            far_pair& p = Far_pairs[Far_pair_count++];
+            p.field = f;
+            p.target = t;
+            p.count = 1;
+            p.first_field = field;
+            p.first_target = target;
+            return;
+        }
+        Far_unsorted++;
+    }
+
+    const char* far_area_label(const far_area& a, char* out, size_t size)
+    {
+        switch (a.kind)
+        {
+        case 1:
+        {
+            scaling_region_info info;
+            if (scaling_region((int)a.id, &info))
+            {
+                char label[160];
+                const char* name = strstr(info.name, "object_pool<") != nullptr ? pool_label(info.name, label, sizeof(label)) : info.name;
+                snprintf(out, size, "region \"%s\" (%.0f MB at %p)", name, mb(info.reserved), info.base);
+                return out;
+            }
+            break;
+        }
+        case 2:
+        {
+            const void* start = nullptr;
+            unsigned long long bytes = 0;
+            const char* name = nullptr;
+            if (keen::memory::memtestLayoutBlock((unsigned int)a.id, &start, &bytes, &name))
+            {
+                snprintf(out, size, "layout block %u %s (%.0f MB at %p)", (unsigned int)a.id, name != nullptr ? name : "", mb(bytes), start);
+                return out;
+            }
+            break;
+        }
+        case 3:
+        {
+            char path[MAX_PATH] = "";
+            GetModuleFileNameA((HMODULE)a.id, path, sizeof(path));
+            const char* file = strrchr(path, '\\');
+            snprintf(out, size, "the image of %s (%p)", file != nullptr ? file + 1 : path, (const void*)a.id);
+            return out;
+        }
+        case 4:
+        {
+            // The allocation's size: its regions while they belong to it.
+            unsigned long long bytes = 0;
+            const char* p = (const char*)a.id;
+            MEMORY_BASIC_INFORMATION mbi;
+            while (VirtualQuery(p + bytes, &mbi, sizeof(mbi)) != 0 && mbi.AllocationBase == (void*)a.id && mbi.RegionSize > 0)
+            {
+                bytes += mbi.RegionSize;
+            }
+            snprintf(out, size, "an allocation of %.1f MB at %p", mb(bytes), (const void*)a.id);
+            return out;
+        }
+        default:
+            break;
+        }
+        snprintf(out, size, "(nowhere known)");
+        return out;
+    }
+
+    void write_far_census(FILE* f)
+    {
+        if (Far_pair_count == 0)
+        {
+            return;
+        }
+        // Largest first.
+        far_pair sorted[64];
+        const int n = Far_pair_count;
+        memcpy(sorted, Far_pairs, sizeof(far_pair) * (size_t)n);
+        for (int i = 1; i < n; i++)
+        {
+            for (int j = i; j > 0 && sorted[j].count > sorted[j - 1].count; j--)
+            {
+                const far_pair swap = sorted[j];
+                sorted[j] = sorted[j - 1];
+                sorted[j - 1] = swap;
+            }
+        }
+        fprintf(f, "  far entries by where the field and its target lie (the first of each: field, target):\n");
+        char a[200];
+        char b[200];
+        for (int i = 0; i < n; i++)
+        {
+            fprintf(f, "  %10u  %s\n              -> %s   [%p -> %p]\n", sorted[i].count, far_area_label(sorted[i].field, a, sizeof(a)),
+                    far_area_label(sorted[i].target, b, sizeof(b)), sorted[i].first_field, sorted[i].first_target);
+        }
+        if (Far_unsorted > 0)
+        {
+            fprintf(f, "  %10u  in other pairs\n", Far_unsorted);
+        }
+    }
+
+    void write_scaling_summary(FILE* f)
+    {
+        int pages = 0;
+        const long long havok = havok_memory_heap_page_bytes(&pages);
+        fprintf(f, "grow-on-demand memory (%s)\n", scaling_enabled() ? "on" : "off: OPENRFG_SCALING=0");
+        if (havok > 0 || pages > 0)
+        {
+            fprintf(f, "  %-40s %10.1f MB in %d pages (at most 2 GB)\n", "Havok heap", mb((unsigned long long)havok), pages);
+        }
+        scaling_region_info info;
+        char label[160];
+        for (int i = 0; scaling_region(i, &info); i++)
+        {
+            if (info.committed >= (1u << 20) && strcmp(info.name, "Havok heap") != 0) // Havok's: the page line above
+            {
+                const char* name = strstr(info.name, "object_pool<") != nullptr ? pool_label(info.name, label, sizeof(label)) : info.name;
+                fprintf(f, "  %-40s %10.1f MB committed of %.1f MB reserved\n", name, mb(info.committed), mb(info.reserved));
+            }
+        }
+        fprintf(f, "  %d regions, %u granules committed on first touch, %u commits refused by the system\n", scaling_region_count(),
+                scaling_fault_count(), scaling_commit_failures());
+        scaling_pool_info pools[512];
+        const int grown = scaling_grown_pools(pools, 512);
+        for (int i = 0; i < grown; i++)
+        {
+            fprintf(f, "  pool grew: %-60s %u -> %u objects\n", pool_label(pools[i].name, label, sizeof(label)), pools[i].initial,
+                    pools[i].objects);
+        }
+        const int exhausted = scaling_exhausted_pools(pools, 512);
+        for (int i = 0; i < exhausted; i++)
+        {
+            fprintf(f, "  pool FULL: %-60s at %u objects\n", pool_label(pools[i].name, label, sizeof(label)), pools[i].objects);
+        }
+        fprintf(f, "\n");
+    }
+
+    // Growth events: a region (or Havok's heap) passing the next 64 MB step, or doubling below 64 MB.
+    unsigned long long Scaling_reported[4096];
+    long long Havok_pages_reported;
+
+    bool grew(unsigned long long now, unsigned long long& reported)
+    {
+        const unsigned long long step = 64ull << 20;
+        const bool passed = reported < step ? now >= 2 * reported && now >= (1ull << 20) && now > reported : now / step > reported / step;
+        if (passed)
+        {
+            reported = now;
+        }
+        return passed;
+    }
+
+    // "object_pool<struct glass_shard,750,1>" out of a pool's __FUNCSIG__.
+    const char* pool_label(const char* name, char* out, size_t size)
+    {
+        if (name == nullptr)
+        {
+            return "(a pool without a name)";
+        }
+        const char* p = strstr(name, "object_pool<");
+        const char* e = p != nullptr ? strstr(p, ">::") : nullptr;
+        if (p == nullptr || e == nullptr)
+        {
+            return name;
+        }
+        const size_t n = (size_t)(e - p + 1) < size - 1 ? (size_t)(e - p + 1) : size - 1;
+        memcpy(out, p, n);
+        out[n] = '\0';
+        return out;
+    }
+
+    int Exhausted_reported;
+    unsigned int Grown_reported[512];
+    const char* Grown_names[512];
+    int Grown_names_count;
+
+    void report_pools()
+    {
+        scaling_pool_info pools[512];
+        char label[160];
+        const int exhausted = scaling_exhausted_pools(pools, 512);
+        for (; Exhausted_reported < exhausted; Exhausted_reported++)
+        {
+            memtest_event("pool: %s is full (%u objects)", pool_label(pools[Exhausted_reported].name, label, sizeof(label)),
+                          pools[Exhausted_reported].objects);
+        }
+        const int grown = scaling_grown_pools(pools, 512);
+        for (int i = 0; i < grown; i++)
+        {
+            int k = 0;
+            while (k < Grown_names_count && Grown_names[k] != pools[i].name)
+            {
+                k++;
+            }
+            if (k == Grown_names_count)
+            {
+                if (Grown_names_count >= 512)
+                {
+                    continue;
+                }
+                Grown_names[Grown_names_count] = pools[i].name;
+                Grown_reported[Grown_names_count] = pools[i].initial;
+                Grown_names_count++;
+            }
+            if (pools[i].objects >= 2 * Grown_reported[k])
+            {
+                memtest_event("scaling: pool %s grew %u -> %u objects", pool_label(pools[i].name, label, sizeof(label)), pools[i].initial,
+                              pools[i].objects);
+                Grown_reported[k] = pools[i].objects;
+            }
+        }
+    }
+
+    void report_scaling()
+    {
+        report_pools();
+        scaling_region_info info;
+        for (int i = 0; i < 4096 && scaling_region(i, &info); i++)
+        {
+            if (grew(info.committed, Scaling_reported[i]))
+            {
+                memtest_event("scaling: %s grew to %.1f MB committed (of %.1f MB reserved)", info.name, mb(info.committed), mb(info.reserved));
+            }
+        }
+        int pages = 0;
+        unsigned long long havok = (unsigned long long)havok_memory_heap_page_bytes(&pages);
+        unsigned long long reported = (unsigned long long)Havok_pages_reported;
+        if (grew(havok, reported))
+        {
+            Havok_pages_reported = (long long)reported;
+            memtest_event("scaling: Havok's heap grew to %.1f MB (%d page%s)", mb(havok), pages, pages == 1 ? "" : "s");
+        }
     }
 
     void write_summary(const char* reason)
@@ -805,10 +1144,12 @@ namespace
         fprintf(f, "  compiles cancelled with the request pool empty %u\n", Debris.recompiles_cancelled);
         fprintf(f, "  Havok: islands trimmed by the watchdog %u (%u bodies destroyed: solver memory), low-memory calls %u\n\n",
                 Debris.island_trims, Debris.bodies_trimmed, Debris.havok_low_memory);
+        write_scaling_summary(f);
         fprintf(f, "32-bit structures\n");
 #ifdef OPENRFG_X64
         fprintf(f, "  far offset table        %10u of %u entries at the peak%s\n", Peak_far, et_far::Max_entries,
                 Peak_far >= et_far::Max_entries ? "  ** FULL: offsets are being truncated **" : "");
+        write_far_census(f);
 #endif
         fprintf(f, "  string table fallbacks  %10ld records outside their arena, %ld tables without an arena\n\n", Strpool_fallbacks, Strpool_unregistered);
         fprintf(f, "failure messages from the game: %ld%s%s\n\n", Failure_messages, Last_failure[0] ? ", the last: " : "", Last_failure);
@@ -929,6 +1270,10 @@ void memtest_init()
     }
     Initialized = true;
     Start_ms = GetTickCount64();
+    scaling_static_init_done(); // scaling: pools made from now on keep the game's fixed storage
+#ifdef OPENRFG_X64
+    et_far::On_new_entry = note_far_entry;
+#endif
     const unsigned char* base = (const unsigned char*)GetModuleHandleA(nullptr);
     const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(base + ((const IMAGE_DOS_HEADER*)base)->e_lfanew);
     Image_lo = (uintptr_t)base;
@@ -962,7 +1307,7 @@ void memtest_init()
                      "level_largest_free_mb,level_failures,collision_models,collision_models_max,general_movers,general_movers_max,"
                      "zone_handles_used,zones,render_instances,render_instances_max,zone_free,debris_kept,debris_deleted_by_budget,"
                      "fades_blocked,vaporize_refused,debris_recycled,stream_parent_gone,demolish_bombs,havok_system_mb,havok_solver_mb,"
-                     "island_trims,bodies_trimmed,havok_low_memory\n");
+                     "island_trims,bodies_trimmed,havok_low_memory,scaling_committed_mb,havok_pages_mb,scaling_faults\n");
         fflush(Csv);
     }
     if (Pools_csv != nullptr)
@@ -1026,6 +1371,7 @@ void memtest_frame()
         Last_state = state;
     }
     wc_drive();
+    report_scaling();
     const unsigned long long now = GetTickCount64();
     if (now - Last_census_ms >= Interval_ms)
     {

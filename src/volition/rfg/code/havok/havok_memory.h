@@ -49,5 +49,7 @@ void havok_memory_shutdown(); // 0x00824DD0 (:696)
 void havok_memory_level_init(); // 0x00811AA0 (:731)
 void havok_memory_level_shutdown(); // 0x00811AB0 (:740)
 unsigned int havok_memory_get_largest_block(); // 0x0083C480 (:750)
+long long havok_memory_heap_page_bytes(int* pages); // scaling (OpenRFG64-memtest): the growing heap's pages
+long long havok_memory_heap_page_limit();           // scaling: what they may reach (0 with a fixed block)
 hkMemoryRouter* havok_create_thread_memory_router(); // 0x0081C640 (:771)
 void havok_destroy_thread_memory_router(hkMemoryRouter* router); // 0x0082B080 (:789)

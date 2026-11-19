@@ -15,6 +15,7 @@
 //   alignments up to the page size (get_align_page_count handles the larger ones by skipping whole pages).
 
 #include "volition/vlib/code/memory/page_mempool.h"
+#include "scaling/scaling.h" // scaling
 #include "volition/vlib/code/vlib_core/vlib_assert.h"
 
 #include "keen/base/trace.hpp"
@@ -460,7 +461,10 @@ void page_mempool::release_bytes(void* mem)
 // 0x00589880 (:545)
 bool page_mempool::clear()
 {
-    memset(pool, 0, max_size);
+    if (!scaling_reset(pool, max_size)) // scaling: a region is decommitted instead (touching it all would commit it)
+    {
+        memset(pool, 0, max_size);
+    }
     current_pos = 0;
     first_free_index = 0;
     // One free run over all pages (a null write when there are none, see the file comment).

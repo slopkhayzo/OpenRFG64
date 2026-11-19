@@ -9,6 +9,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "scaling/scaling.h" // scaling: commit-on-touch faults are not crashes
+
 #pragma init_seg(compiler)
 
 namespace
@@ -129,6 +131,12 @@ namespace
         const EXCEPTION_RECORD* rec = info->ExceptionRecord;
         const DWORD code = rec->ExceptionCode;
         DWORD oldProtect;
+        // scaling (OpenRFG64-memtest): the first touch of a grow-on-demand region commits it; the access runs again.
+        if (code == EXCEPTION_ACCESS_VIOLATION && rec->NumberParameters >= 2 && rec->ExceptionInformation[0] != 8 &&
+            scaling_fault((const void*)rec->ExceptionInformation[1]))
+        {
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         if (Watch_rearm && code == EXCEPTION_SINGLE_STEP)
         {
             Watch_rearm = false;

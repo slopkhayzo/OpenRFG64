@@ -8,6 +8,7 @@
 // (s_handshake_start) and keeps it waiting (s_handshake_end) while instances change their sub instances.
 
 #include "volition/render_lib/code/rl_mesh_recompile.h"
+#include "scaling/scaling.h" // scaling
 #include "memtest/memtest.h" // memtest
 
 #include "volition/render_lib/code/rl_batch_defines.h"
@@ -37,6 +38,7 @@ static spsc_queue<rl_mesh_recompile_parameters*> finalize_queue; // 0x01C20A48
 static keen::Mutex s_completionEntriesMutex; // 0x01C37190
 static unsigned char* s_params_mem_p = nullptr; // 0x01B7BCD8
 static pool_list<rl_mesh_recompile_parameters*> s_params_pool; // 0x01514E44
+static unsigned int s_params_total; // scaling (OpenRFG64-memtest): the records made so far
 static unsigned int mesh_recompile_thread_handle; // 0x01B7BCD4
 // Magic number: 2048 pending frees.
 static CompletionEntry s_completionEntries[2048]; // 0x01B72BF8
@@ -220,6 +222,7 @@ void rl_mesh_recompile_initialize()
     {
         s_params_pool.add((rl_mesh_recompile_parameters*)(s_params_mem_p + i * sizeof(rl_mesh_recompile_parameters)));
     }
+    s_params_total = 0x1000; // scaling
     mesh_recompile_thread_handle = thread_spawn(mesh_recompile_thread, nullptr, 0, THREAD_PRIOR_LOW, "mesh recompile thread", 0);
     memset(s_completionEntries, 0, sizeof(s_completionEntries));
 }
@@ -294,6 +297,25 @@ void rl_mesh_recompile_shutdown()
 // is free; outside init the recompile thread is paused around it.
 void rl_start_recompile_mesh_instance(rl_destroyable_model_instance* instance_p, bool initing)
 {
+    // scaling (OpenRFG64-memtest): with no record free the pool gets as many records again (a shatter burst asks for a
+    // compile per new piece); the game dropped the request instead.
+    if (Rl_recompile_mesh_enable && s_params_pool.size() <= 0 && scaling_enabled())
+    {
+        start_recompile_cs.enter();
+        if (s_params_pool.size() <= 0 && s_params_total < (1u << 22))
+        {
+            const unsigned int count = s_params_total;
+            rl_mesh_recompile_parameters* records = new rl_mesh_recompile_parameters[count](); // kept for the session
+            s_params_pool.grow_dynamic((int)(s_params_total + count));
+            for (unsigned int i = 0; i < count; i++)
+            {
+                s_params_pool.add(&records[i]);
+            }
+            s_params_total += count;
+            memtest_event("scaling: compile requests %u -> %u", count, s_params_total);
+        }
+        start_recompile_cs.leave();
+    }
     if (!Rl_recompile_mesh_enable || s_params_pool.size() <= 0)
     {
         // Fix (rfgphys's d_start_recompile does the same in rfg.exe): with no request free the instance's pending

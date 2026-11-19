@@ -74,6 +74,29 @@ void pool_list<T>::init(T* data_ptr, int size, int num_existing_elements)
     this->elt = data_ptr;
 }
 
+// scaling (OpenRFG64-memtest, new): the list's array grows; what it holds is copied (nothing points into the array:
+// it holds the free objects or records, which stay where they are).
+template<typename T>
+void pool_list<T>::grow_dynamic(int new_capacity)
+{
+    if (new_capacity <= this->array_size)
+    {
+        return;
+    }
+    T* elements = new T[new_capacity];
+    for (int i = 0; i < this->num; i++)
+    {
+        elements[i] = this->elt[i];
+    }
+    if (m_init_dynamic)
+    {
+        delete[] this->elt;
+    }
+    this->elt = elements;
+    this->array_size = new_capacity;
+    m_init_dynamic = true;
+}
+
 // <rl_light*> 0x005029D0 (.h:80)
 template<typename T>
 void pool_list<T>::init_dynamic(int count)

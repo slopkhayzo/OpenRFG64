@@ -25,7 +25,10 @@ inline tables& get_tables()
     static tables t;
     return t;
 }
-inline int far_index_of(const void* target)
+// memtest (OpenRFG64-memtest): told of each new entry and the field that needed it, under the table's lock (the census
+// sorts them by memory region). Must not take an entry itself.
+inline void (*On_new_entry)(const void* field, const void* target) = nullptr;
+inline int far_index_of(const void* target, const void* field = nullptr)
 {
     tables& t = get_tables();
     while (_InterlockedCompareExchange(&t.lock, 1, 0) != 0)
@@ -45,6 +48,10 @@ inline int far_index_of(const void* target)
                 t.hash[h] = t.count + 1;
                 result = (int)t.count;
                 t.count++;
+                if (On_new_entry != nullptr)
+                {
+                    On_new_entry(field, target);
+                }
             }
             break;
         }
@@ -112,7 +119,7 @@ void et_ptr_offset<T, NULLABLE>::from_pointer(T* const value)
         const long long d = (long long)((char*)value - (char*)this);
         if (d > 0x7EFFFFFFLL || d < -0x80000000LL)
         {
-            const int index = et_far::far_index_of(value);
+            const int index = et_far::far_index_of(value, this);
             if (index >= 0)
             {
                 m_offset = et_far::Base + index;

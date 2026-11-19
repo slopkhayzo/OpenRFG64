@@ -24,6 +24,68 @@ object_pool_server<T>::object_pool_server(void (T::*init)(), void (T::*release)(
     avail.count = 0;
     init_cb = init;
     release_cb = release;
+    pool_name = nullptr;
+    reserve_capacity = 0;
+    grow_step = 0;
+    low_water = 0;
+    exhausted_reported = false;
+}
+
+// scaling (OpenRFG64-memtest): the region holds the objects, then their links, then their categories, each part sized
+// for `reserve` objects; nothing moves as the pool grows.
+template<typename T>
+void object_pool_server<T>::init_growable(void* region, unsigned int num_objects, unsigned int reserve)
+{
+    unsigned char* p = (unsigned char*)region;
+    base = (T*)p;
+    p += ((size_t)reserve * sizeof(T) + 15) & ~(size_t)15;
+    links = (index_link*)p;
+    p += ((size_t)reserve * sizeof(index_link) + 15) & ~(size_t)15;
+    cat = p;
+    max_capacity = 0;
+    avail.head = 0;
+    avail.count = 0;
+    reserve_capacity = reserve;
+    grow_step = num_objects < 64 ? 64 : num_objects;
+    low_water = num_objects / 4 < 1 ? 1 : num_objects / 4;
+    construct(num_objects);
+}
+
+// scaling: count more objects at the end of the region, constructed and free.
+template<typename T>
+void object_pool_server<T>::construct(unsigned int count)
+{
+    const unsigned int first = max_capacity;
+    if (count > reserve_capacity - first)
+    {
+        count = reserve_capacity - first;
+    }
+    scaling_commit(&base[first], (size_t)count * sizeof(T));
+    scaling_commit(&links[first], (size_t)count * sizeof(index_link));
+    scaling_commit(&cat[first], count);
+    for (unsigned int i = first; i < first + count; ++i)
+    {
+        new (&base[i]) T;
+        cat[i] = 0xFF;
+    }
+    max_capacity = first + count; // the new objects exist before anything can be given them
+    for (unsigned int i = first; i < first + count; ++i)
+    {
+        append(avail, (int)i);
+    }
+    scaling_note_pool(base, pool_name, max_capacity);
+}
+
+// scaling: another step of objects, while the region has room.
+template<typename T>
+bool object_pool_server<T>::grow()
+{
+    if (max_capacity >= reserve_capacity)
+    {
+        return false;
+    }
+    construct(grow_step);
+    return true;
 }
 
 // <split_memblk> 0x005B3E50 (:31)
@@ -153,12 +215,21 @@ void object_pool_server<T>::append(index_list& list, int index)
 template<typename T>
 int object_pool_server<T>::grab()
 {
-    if (avail.count < 1)
+    if (avail.count < 1 && !grow()) // scaling: a growing pool makes more objects first
     {
+        if (!exhausted_reported) // scaling: the census names the pools that run out
+        {
+            exhausted_reported = true;
+            scaling_pool_exhausted(pool_name, max_capacity);
+        }
         return -1;
     }
     const int index = avail.head;
     remove(avail, index);
+    if (reserve_capacity != 0 && avail.count < (int)low_water) // scaling: keep room for the game's checks
+    {
+        grow();
+    }
     if (init_cb != nullptr)
     {
         (base[index].*init_cb)();
@@ -416,6 +487,23 @@ template<typename T, int N, int K>
 object_pool<T, N, K>::object_pool(void (T::*init_cb)(), void (T::*release_cb)(), int __cs_debug_handle)
     : dynamic_object_pool<T, K>(init_cb, release_cb, __cs_debug_handle)
 {
+    // scaling (OpenRFG64-memtest): a pool on scaling's list (made during static initialization, not of world objects)
+    // lives in a reserved region and grows; the others keep the inline storage below.
+    this->pool_name = __FUNCSIG__;
+    if (!std::is_base_of<object, T>::value)
+    {
+        const unsigned int reserve = scaling_pool_reserve(this->pool_name, (unsigned int)N);
+        if (reserve > (unsigned int)N)
+        {
+            const size_t bytes = (((size_t)reserve * sizeof(T) + 15) & ~(size_t)15) + (((size_t)reserve * sizeof(index_link) + 15) & ~(size_t)15) + reserve;
+            if (void* region = scaling_reserve(this->pool_name, bytes, 0))
+            {
+                object_pool_server<T>::init_growable(region, (unsigned int)N, reserve);
+                object_pool_client<T, K>::reset();
+                return;
+            }
+        }
+    }
     // The storage is carved out of data[] through a temporary pool (align 1).
     mempool pool(data, sizeof(data), "object pool", 1, 0);
     dynamic_object_pool<T, K>::init(pool, N);

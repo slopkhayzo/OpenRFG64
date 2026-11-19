@@ -23,6 +23,7 @@
 //   link restored from below num_links is not moved back into place.
 
 #include "volition/rfg/code/destruction/rfg_shapes.h"
+#include "scaling/scaling.h" // scaling
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/math/matrix/hktransformf.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/types/geometry/aabb/hkaabb.h"
@@ -1739,7 +1740,16 @@ void rfg_subpiece_base::set_override_shape(material_shape_type type)
 void rfg_shape_system_init()
 {
     Destroyable_uid_hash.clear();
-    RFG_shape_rbb_mempool.init(RFG_shape_rbb_buf, sizeof(RFG_shape_rbb_buf), 0x80, "Rbb_tree_pool", 1, 0);
+    // scaling (OpenRFG64-memtest): a 512 MB region committed as the trees fill it, instead of the fixed 294 KB (full
+    // after a few minutes of demolition on a large map).
+    if (void* rbb_region = scaling_reserve("destruction trees (Rbb_tree_pool)", 512u << 20, sizeof(RFG_shape_rbb_buf)))
+    {
+        RFG_shape_rbb_mempool.init(rbb_region, 512u << 20, 0x80, "Rbb_tree_pool", 1, 0);
+    }
+    else
+    {
+        RFG_shape_rbb_mempool.init(RFG_shape_rbb_buf, sizeof(RFG_shape_rbb_buf), 0x80, "Rbb_tree_pool", 1, 0);
+    }
 }
 
 // 0x007178E0 (:2164)

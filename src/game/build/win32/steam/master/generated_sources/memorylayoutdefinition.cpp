@@ -8,6 +8,7 @@
 
 #include "game/build/win32/steam/master/generated_sources/memorylayoutdefinition.hpp"
 #include "library/modules/runtime/base/sources/global/memorylayout.hpp"
+#include "scaling/scaling.h" // scaling
 
 namespace keen
 {
@@ -35,6 +36,25 @@ namespace keen
     // 0x00CE6120 (:36)
     const MemoryLayoutDefinition& getMemoryLayoutDefinition()
     {
-        return s_memoryLayoutDefinition;
+        // scaling (OpenRFG64-memtest): level memory (block 6) is a grow-on-demand region then, just under 2 GB (the streamer
+        // compares its free space as an int), only reserved, together with Havok's heap (memorylayout_win32.cpp); the
+        // main provider (block 2) is 448 MB smaller, Havok's heap no longer being carved from it.
+        static MemoryBlockDefinition blocks[15];
+        static MemoryLayoutDefinition definition = { blocks, 15u };
+        static bool made = false;
+        if (!made)
+        {
+            for (int i = 0; i < 15; i++)
+            {
+                blocks[i] = s_memoryBlocks[i];
+            }
+            if (scaling_enabled())
+            {
+                blocks[6].size = 0x7FFF0000u;
+                blocks[2].size -= 0x1C000000u;
+            }
+            made = true;
+        }
+        return s_memoryLayoutDefinition.blockCount == 15u ? definition : s_memoryLayoutDefinition;
     }
 }

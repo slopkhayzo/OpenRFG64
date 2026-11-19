@@ -30,6 +30,7 @@
 
 #include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRA
 #include "volition/rfg/code/rfg.h"
+#include "scaling/scaling.h" // scaling
 
 #include "keen/base/language.hpp"
 #include "keen/base/tlsfmemoryallocator.hpp"
@@ -1836,7 +1837,9 @@ static void boot_stage_1_pools()
     Cloth_sim_runtime_mempool.init(mempool_init_alloc(0x34800), 0x34800, 0x400, "cloth sim runtime", 4, 0);
     #ifdef OPENRFG_X64
     // X64: Havok objects are ~2x bigger with 64-bit pointers; the 75 MB pool ran out (allocationFailure hang)
-    Havok_mempool.init(mempool_init_alloc(0x20000000), 0x20000000, "Havok", 4, 8);
+    // scaling (OpenRFG64-memtest): with a growing heap (havok_memory_init) the block is not used; a token one stays.
+    const unsigned int havok_block = scaling_enabled() ? 0x10000u : 0x20000000u;
+    Havok_mempool.init(mempool_init_alloc(havok_block), havok_block, "Havok", 4, 8);
 #else
     Havok_mempool.init(mempool_init_alloc(0x4B00000), 0x4B00000, "Havok", 4, 8);
 #endif
@@ -1857,11 +1860,23 @@ static void boot_stage_1_pools()
     tiny_buckets[1].num_hash_entries = 0x800;
 #ifdef OPENRFG_X64
     // 64-bit hash entries/pointers are larger than the 32-bit ones the 0x95010 size was made for.
-    Level_memmgr_header_pool.init(mempool_init_alloc(0x95010 * 3), 0x95010 * 3, "Level memmgr headers", 4, 8);
+    // scaling (OpenRFG64-memtest): room for 16 times the large-allocation headers when level memory grows (below).
+    const unsigned int level_header_bytes = scaling_enabled() ? 0x95010 * 3 + 0x800000 : 0x95010 * 3;
+    Level_memmgr_header_pool.init(mempool_init_alloc(level_header_bytes), level_header_bytes, "Level memmgr headers", 4, 8);
 #else
     Level_memmgr_header_pool.init(mempool_init_alloc(0x95010), 0x95010, "Level memmgr headers", 4, 8);
 #endif
-    Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, 0x800, Level_memmgr_header_pool, 0xC00);
+    // scaling (OpenRFG64-memtest): block 6 is a reserved region of just under 2 GB then (memorylayoutdefinition.cpp),
+    // committed as it is used: its tiny buckets go at its start (split_memmgr::init) and are committed at once, every
+    // large allocation commits itself (split_memmgr::alloc: file reads go straight into it), and it gets 16 times the
+    // large-allocation headers.
+    unsigned int level_large_allocations = 0x800;
+    if (scaling_contains(s_levelMemoryBlock.pStart))
+    {
+        scaling_commit(s_levelMemoryBlock.pStart, tiny_buckets[0].size + tiny_buckets[1].size);
+        level_large_allocations = 0x8000;
+    }
+    Level_memmgr.init(s_levelMemoryBlock.pStart, (unsigned int)s_levelMemoryBlock.size, 2, tiny_buckets, Level_memmgr_header_pool, level_large_allocations, Level_memmgr_header_pool, 0xC00);
     Stream_world_allocator.init(&Level_memmgr, &Level_memmgr);
     RFG_scratch_pool.init(mempool_init_alloc(0x130000), 0x130000, "thread scratch space", 4, 8);
     Special_reserve.init_rfg_split_mempool("special reserve mempool", mempool_init_alloc(4), 4, 4, nullptr, 0, 4, 8);

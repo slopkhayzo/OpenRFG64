@@ -22,6 +22,7 @@
 //   in Havok_memory_listener_local).
 
 #include "volition/rfg/code/havok/havok_memory.h"
+#include "scaling/scaling.h" // scaling
 #include "memtest/memtest.h" // memtest
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/allocator/freelist/hkfreelistallocator.h"
@@ -80,6 +81,144 @@ namespace
     void (*s_onQuitFunc)(); // 0x02B82294
     hkMemoryAllocator* s_freeListAllocator; // 0x02B82290
     hkMemoryAllocator* s_largeBlockAllocator; // 0x02B8228C
+
+    // scaling (OpenRFG64-memtest): Havok's heap grows page by page instead of living in one fixed block. The large
+    // block allocator takes a new page from this server when its pages are full (Havok's multi-page mode; the game
+    // only used one fixed block), and gives back pages that became empty when it collects garbage. Pages are 32 MB,
+    // or what one request needs. Havok counts its memory in 32-bit ints and longs, so the heap stops at 2 GB (four
+    // times the 512 MB block); past that its counters would have to be widened.
+    class havok_page_server : public hkMemoryAllocator
+    {
+    public:
+        static const int Page_bytes = 32 << 20;
+        static const long long Max_bytes = 0x7FF00000;
+
+        void* blockAlloc(int numBytes) override
+        {
+            int size = numBytes;
+            return bufAlloc(size);
+        }
+        void blockFree(void* p, int numBytes) override
+        {
+            bufFree(p, numBytes);
+        }
+        void* bufAlloc(int& reqBytesInOut) override
+        {
+            long long want = reqBytesInOut < Page_bytes ? Page_bytes : ((long long)reqBytesInOut + 0xFFFF) & ~0xFFFFLL;
+            if (m_total + want > Max_bytes)
+            {
+                return nullptr;
+            }
+            void* page = take_page(want); // may raise want (a larger page given back earlier)
+            if (page == nullptr)
+            {
+                return nullptr;
+            }
+            m_total += want;
+            m_pages++;
+            if (m_total > m_peak)
+            {
+                m_peak = m_total;
+            }
+            reqBytesInOut = (int)want;
+            return page;
+        }
+        void bufFree(void* p, int numBytes) override
+        {
+            if (p != nullptr)
+            {
+                give_page(p, numBytes);
+                m_total -= numBytes;
+                m_pages--;
+            }
+        }
+
+        // Pages come from the "Havok heap" region (memorylayout_win32.cpp: just below level memory), carved downward
+        // from its top so they stay next to the level's data; a page given back is decommitted and kept for reuse.
+        // Without the region (scaling off for the layout) they come straight from the system.
+        void* take_page(long long& bytes)
+        {
+            if (m_region == nullptr)
+            {
+                size_t size = 0;
+                void* base = nullptr;
+                if (scaling_find("Havok heap", &base, &size))
+                {
+                    m_region = (char*)base;
+                    m_low = (char*)base + size;
+                }
+            }
+            if (m_region == nullptr)
+            {
+                return scaling_system_alloc((size_t)bytes);
+            }
+            for (int i = 0; i < m_free_count; i++) // a page given back, big enough
+            {
+                if (m_free[i].bytes >= bytes && m_free[i].bytes <= Max_bytes - m_total)
+                {
+                    char* page = m_free[i].page;
+                    const long long page_bytes = m_free[i].bytes;
+                    if (!scaling_commit(page, (size_t)page_bytes))
+                    {
+                        return nullptr;
+                    }
+                    m_free[i] = m_free[--m_free_count];
+                    bytes = page_bytes; // the whole page, so that it comes back whole
+                    return page;
+                }
+            }
+            if (m_low - m_region < bytes)
+            {
+                return nullptr;
+            }
+            m_low -= bytes;
+            return scaling_commit(m_low, (size_t)bytes) ? m_low : nullptr;
+        }
+        void give_page(void* p, int bytes)
+        {
+            if (m_region == nullptr || (char*)p < m_region || (char*)p >= m_region + Max_bytes + 0x100000)
+            {
+                scaling_system_free(p);
+                return;
+            }
+            scaling_reset(p, (size_t)bytes);
+            if (m_free_count < 256)
+            {
+                m_free[m_free_count].page = (char*)p;
+                m_free[m_free_count].bytes = bytes;
+                m_free_count++;
+            }
+        }
+
+        struct free_page
+        {
+            char* page;
+            long long bytes;
+        };
+        char* m_region = nullptr;
+        char* m_low = nullptr;
+        free_page m_free[256] = {};
+        int m_free_count = 0;
+        void getMemoryStatistics(MemoryStatistics& u) const override
+        {
+            u.m_allocated = (long)m_total;
+            u.m_inUse = (long)m_total;
+            u.m_peakInUse = (long)m_peak;
+            u.m_available = (long)(Max_bytes - m_total);
+            u.m_totalAvailable = (long)Max_bytes;
+            u.m_largestBlock = (long)(Max_bytes - m_total);
+        }
+        int getAllocatedSize(const void* obj, int nbytes) const override
+        {
+            return nbytes;
+        }
+
+        long long m_total = 0;
+        long long m_peak = 0;
+        int m_pages = 0;
+    };
+    alignas(16) unsigned char Havok_page_server_memory[sizeof(havok_page_server)];
+    havok_page_server* Havok_page_server;
 
     // 0x008119D0 (:142)
     void onQuit()
@@ -435,9 +574,21 @@ void havok_memory_init()
     Havok_error_handler = new (Havok_error_handler_memory) hkDefaultError(havok_report_function, nullptr);
     hkError::replaceInstanceAndAddReference(Havok_error_handler);
 
-    const int size = Havok_mempool.space_free(); // inlined (end_pos - current_pos)
-    void* block = Havok_mempool.alloc_all(0);
-    hkLargeBlockAllocator* server = new (s_buffer.m_largeBlock) hkLargeBlockAllocator(block, size);
+    // scaling (OpenRFG64-memtest): pages from Havok_page_server instead of all of Havok_mempool (see above).
+    int size;
+    hkLargeBlockAllocator* server;
+    if (scaling_enabled())
+    {
+        Havok_page_server = new (Havok_page_server_memory) havok_page_server();
+        size = (int)havok_page_server::Max_bytes;
+        server = new (s_buffer.m_largeBlock) hkLargeBlockAllocator(Havok_page_server);
+    }
+    else
+    {
+        size = Havok_mempool.space_free(); // inlined (end_pos - current_pos)
+        void* block = Havok_mempool.alloc_all(0);
+        server = new (s_buffer.m_largeBlock) hkLargeBlockAllocator(block, size);
+    }
     hkFreeListAllocator* heap_allocator = new (s_buffer.m_allocator) hkFreeListAllocator(server, server, nullptr);
     hkFreeListMemorySystem* system = new (s_buffer.m_system) hkFreeListMemorySystem(server, heap_allocator, heap_allocator, hkFreeListMemorySystem::DEFAULT_SETUP_FLAGS);
     system->setHeapSoftLimit(0x200000); // 2 MB
@@ -535,6 +686,22 @@ void havok_memory_level_shutdown()
     hkMemorySystem::getInstance().garbageCollect();
 }
 
+// scaling (OpenRFG64-memtest, new): the heap pages Havok holds (0 with a fixed block).
+long long havok_memory_heap_page_bytes(int* pages)
+{
+    if (pages != nullptr)
+    {
+        *pages = Havok_page_server != nullptr ? Havok_page_server->m_pages : 0;
+    }
+    return Havok_page_server != nullptr ? Havok_page_server->m_total : 0;
+}
+
+// scaling (OpenRFG64-memtest, new): the most the growing heap's pages may reach (0 with a fixed block).
+long long havok_memory_heap_page_limit()
+{
+    return Havok_page_server != nullptr ? havok_page_server::Max_bytes : 0;
+}
+
 // 0x0083C480 (:750)
 // The largest block any allocator of the memory system can hand out.
 unsigned int havok_memory_get_largest_block()
@@ -548,6 +715,15 @@ unsigned int havok_memory_get_largest_block()
         if (largest <= block)
         {
             largest = block;
+        }
+    }
+    // scaling: what the page server can still add counts (the watch dog would free objects for a heap that can grow).
+    if (Havok_page_server != nullptr)
+    {
+        const long long headroom = havok_page_server::Max_bytes - Havok_page_server->m_total;
+        if (headroom > (long long)largest)
+        {
+            largest = (unsigned int)headroom;
         }
     }
     return largest;

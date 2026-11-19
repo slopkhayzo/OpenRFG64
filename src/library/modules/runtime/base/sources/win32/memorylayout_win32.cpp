@@ -9,6 +9,7 @@
 #include "library/modules/runtime/base/sources/global/memorylayout.hpp"
 #include "keen/base/string.hpp"
 #include "keen/base/trace.hpp"
+#include "scaling/scaling.h" // scaling
 
 #include <stdlib.h>
 #include <windows.h>
@@ -85,7 +86,24 @@ namespace keen
                     pMemoryLayout->memoryBlocks[i].size = 0;
                     continue;
                 }
-                uint8* pStart = (uint8*)allocateSystemMemory(size, definition.initialProtectionMask, i);
+                // scaling (OpenRFG64-memtest): level memory (block 6) is only reserved, as a grow-on-demand region; it is
+                // committed as it is used. Havok's heap gets the 2 GB just below it in the same reservation: the level's
+                // data links to Havok's shapes with self-relative 32-bit offsets, and pages taken anywhere put them more
+                // than 2 GB away (OpenRFG64's far-offset table then took 117,000 entries per load, and it never frees any).
+                uint8* pStart = nullptr;
+                if (i == 6u && scaling_enabled())
+                {
+                    const SIZE_T havok_bytes = 0x80000000u;
+                    uint8* const both = (uint8*)VirtualAlloc(nullptr, havok_bytes + size, MEM_RESERVE, PAGE_READWRITE);
+                    if (both != nullptr && scaling_adopt("Havok heap", both, havok_bytes) != nullptr)
+                    {
+                        pStart = (uint8*)scaling_adopt("level memory", both + havok_bytes, size);
+                    }
+                }
+                if (pStart == nullptr)
+                {
+                    pStart = (uint8*)allocateSystemMemory(size, definition.initialProtectionMask, i);
+                }
                 pMemoryLayout->memoryBlocks[i].pStart = pStart;
                 if (pStart == nullptr)
                 {
