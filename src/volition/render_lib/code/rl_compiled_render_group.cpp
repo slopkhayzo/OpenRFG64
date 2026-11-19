@@ -47,6 +47,7 @@ static unsigned long long Rl_compiled_render_group_total_calls = 0; // 0x01B7BC6
 
 // The thread's instance stream for render_immediate (TLS slot 0x24, between render_immediate_begin and _end).
 static __declspec(thread) const rl_gpu_mesh_instance* Render_immediate_instances = nullptr;
+static __declspec(thread) unsigned int Render_immediate_count = 0; // X64 fix: the stream's transforms (see render_immediate)
 
 // 0x004BA740
 rl_render_group::rl_render_group()
@@ -283,6 +284,7 @@ void rl_compiled_render_group::render_immediate_begin(rl_renderer& renderer, rl_
 {
     renderer.set_vertex_format((rl_dev_vertex_format)group->vbuffer_info.vertex_format);
     Render_immediate_instances = inst_stream->get_instances();
+    Render_immediate_count = Render_immediate_instances != nullptr ? (unsigned int)inst_stream->get_num_unique_instances() : 0;
 }
 
 // 0x00522330 (:693)
@@ -290,6 +292,11 @@ void rl_compiled_render_group::render_immediate_begin(rl_renderer& renderer, rl_
 // Notes (decompiled behaviour, kept as is): the parameter bytes are multiplied by 255 instead of divided.
 void rl_compiled_render_group::render_immediate(rl_renderer& renderer, rl_render_group* grp_p, rl_batched_instance* inst_p)
 {
+    // X64 fix: a slot whose transform did not fit the stream is not drawn (as in build): the game read past the stream.
+    if (Render_immediate_instances == nullptr || (unsigned int)inst_p->transform_index >= Render_immediate_count)
+    {
+        return;
+    }
     const rl_gpu_mesh_instance& instance = Render_immediate_instances[inst_p->transform_index];
     const unsigned char* params = (const unsigned char*)&instance.instance_params;
     memcpy(&renderer.m_instanceVertexData.objTM, instance.transform, sizeof(instance.transform));
