@@ -27,7 +27,10 @@ namespace
     size_t Watch_len = 0;
     DWORD64 Watch_page = 0;
     bool Watch_active = false;
-    bool Watch_rearm = false;
+    // Per thread: the thread whose write was let through re-protects the page at its single step. One flag for all
+    // threads lost a re-arm when two threads wrote into the page at once, and the second single step went unhandled
+    // (the process ended with 0x80000004).
+    thread_local bool Watch_rearm = false;
 
     void report(EXCEPTION_POINTERS* info, const char* title)
     {

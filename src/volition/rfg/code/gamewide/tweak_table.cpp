@@ -27,7 +27,6 @@ static farray<tweak_table_item*, 350>& get_tweak_table()
 }
 
 #ifdef OPENRFG_X64
-void openrfg_watch(void* p, size_t n); // crash_early.cpp
 static const char* Last_init_name = nullptr;
 #endif
 // 0x007EB160 (:51)
@@ -117,12 +116,6 @@ void tweak_table_item::init(const char* in_name, void* in_value, tweak_value_typ
         if (table.size() < 350)
         {
             table.add(this);
-#ifdef OPENRFG_X64
-            if (table.size() == 295)
-            {
-                openrfg_watch(this, sizeof(*this));
-            }
-#endif
         }
     }
 #ifdef OPENRFG_X64
