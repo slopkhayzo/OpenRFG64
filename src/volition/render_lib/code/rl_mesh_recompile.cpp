@@ -212,11 +212,12 @@ void rl_mesh_recompile_initialize()
     recompile_queue.create();
     finalize_queue.create();
     s_completionEntriesMutex.create("completionEntries");
-    s_params_mem_p = new unsigned char[0xC000];
+    // X64 fix: 0xC000 bytes held 4,096 records of 0xC bytes on x86; the x64 record is 0x18 bytes, so only 2,048 fitted.
+    s_params_mem_p = new unsigned char[0x1000 * sizeof(rl_mesh_recompile_parameters)];
     s_params_pool.init_dynamic(0x1000);
-    for (int offset = 0; offset < 0xC000; offset += sizeof(rl_mesh_recompile_parameters))
+    for (int i = 0; i < 0x1000; i++)
     {
-        s_params_pool.add((rl_mesh_recompile_parameters*)(s_params_mem_p + offset));
+        s_params_pool.add((rl_mesh_recompile_parameters*)(s_params_mem_p + i * sizeof(rl_mesh_recompile_parameters)));
     }
     mesh_recompile_thread_handle = thread_spawn(mesh_recompile_thread, nullptr, 0, THREAD_PRIOR_LOW, "mesh recompile thread", 0);
     memset(s_completionEntries, 0, sizeof(s_completionEntries));
