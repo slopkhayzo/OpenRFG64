@@ -62,7 +62,10 @@ static const int ORIG_TO_BASE_CACHE_SIZE = 0x1000;
 static unsigned short Orig_to_base_index_cache[ORIG_TO_BASE_CACHE_SIZE]; // 0x01B6CAF8
 
 // Sub instance moves go through scratch memory in chunks of this many.
-static const int SUB_INSTANCE_MOVE_CHUNK = 0x1000;
+// Fix (rfgphys's big_buildings does the same in rfg.exe): 512 (16 KB of scratch) instead of the game's 4,096 (128 KB).
+// The thread's scratch pool could not give 128 KB under heavy destruction, and release_sub_instances_internal copied
+// into the null it got.
+static const int SUB_INSTANCE_MOVE_CHUNK = 0x200;
 // Unclaimed leaves and the "no leaf / no instance" index.
 static const unsigned int UNCLAIMED_LEAF_DATA = 0xFFFF0000;
 static const unsigned short INVALID_INDEX = 0xFFFF;
@@ -1691,6 +1694,12 @@ void rl_destroyable_model_instance::set_internal_arrays(rl_sub_instance* new_sub
 void rl_destroyable_model_instance::get_internal_arrays(rl_sub_instance** sub_instances)
 {
     *sub_instances = m_sub_instances;
+}
+
+// New: the pending recompile's parameters (rl_start_recompile_mesh_instance cancels it when no request is free).
+rl_mesh_recompile_parameters* rl_destroyable_model_instance::get_recompile_parameters() const
+{
+    return m_recompile_parameters_p;
 }
 
 // 0x004BDD00 (.h:209)

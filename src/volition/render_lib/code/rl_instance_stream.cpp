@@ -126,6 +126,13 @@ int rl_mesh_instance_stream::add_instances(const rl_mesh_instance_info* insts, i
     return first;
 }
 
+// New (declared in the header, never defined): the instances the stream holds.
+int rl_mesh_instance_stream::get_num_unique_instances() const
+{
+    const int n = (int)m_num_instances;
+    return n < m_max_instances ? n : m_max_instances;
+}
+
 // 0x004C2270 (:124)
 void rl_mesh_instance_stream::set_as_render_instance_stream()
 {

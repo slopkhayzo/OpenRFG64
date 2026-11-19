@@ -246,9 +246,16 @@ void world::collect_sorted_list(base_array<object*>& list, havok_bpi* island)
                 {
                     object** parent = object_handle_hash.get_ptr(parent_handle);
                     objp = parent != nullptr && *parent != nullptr && !(*parent)->obj_flags.stub ? *parent : nullptr;
+                    if (objp == nullptr) // fix: the original reads through null here (debris that outlives its parent)
+                    {
+                        break;
+                    }
                     parent_handle = objp->parent;
                 }
-                visit_object(list, constraints, objp);
+                if (objp != nullptr) // fix
+                {
+                    visit_object(list, constraints, objp);
+                }
             }
             if (bpo->next == island->obj_list)
             {

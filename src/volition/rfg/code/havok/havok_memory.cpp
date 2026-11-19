@@ -108,7 +108,13 @@ static int Garbage_collect_framecount = -1; // 0x0165FDEC, frame of the last wat
 unsigned int Havok_mem_largest_runtime_block; // 0x02B8229C
 
 // Memory router of each worker thread (havok_create_thread_memory_router).
-alignas(16) static __declspec(thread) unsigned char thread_router[64]; // TLS +0x860, an hkMemoryRouter
+// X64 fix: the buffer was 64 bytes, hkMemoryRouter's 32-bit size. On x64 the router is 0x80 bytes and its second half
+// lay over the next thread-local variables (in the build where it crashed: m_heap over rfg_rbb_tree.cpp's
+// Rfg_rbb_node, m_temp over Rfg_rbb_building, m_debug over Rfg_rbb_mempool_mark, m_userData over Rfg_mover_message).
+// Breaking a building wrote a node pointer into Havok's heap pointer, and the next Havok heap allocation called
+// through it (hkContainerHeapAllocator::Allocator::blockAlloc).
+alignas(16) static __declspec(thread) unsigned char thread_router[sizeof(hkMemoryRouter)]; // TLS +0x860, an hkMemoryRouter
+static_assert(sizeof(thread_router) >= sizeof(hkMemoryRouter), "thread_router must hold an hkMemoryRouter");
 
 // 0x00811A10 (:210)
 static void havok_report_function(const char* message, void* report_object)

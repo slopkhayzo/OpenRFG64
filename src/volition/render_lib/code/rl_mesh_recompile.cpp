@@ -294,6 +294,18 @@ void rl_start_recompile_mesh_instance(rl_destroyable_model_instance* instance_p,
 {
     if (!Rl_recompile_mesh_enable || s_params_pool.size() <= 0)
     {
+        // Fix (rfgphys's d_start_recompile does the same in rfg.exe): with no request free the instance's pending
+        // compile went on with the instance as it was when it counted. After a shatter burst (every new piece asks for
+        // a compile) a building's vertices then ran into the next block of the buffer heap, and the next allocation
+        // crashed in tlsf (in compile_cache_data). The pending one is cancelled, as a new request would.
+        if (Rl_recompile_mesh_enable && instance_p != nullptr)
+        {
+            rl_mesh_recompile_parameters* pending = instance_p->get_recompile_parameters();
+            if (pending != nullptr && pending->m_instance_p == instance_p)
+            {
+                _InterlockedExchange((volatile long*)&pending->m_valid, 0);
+            }
+        }
         return;
     }
     if (!initing)

@@ -615,9 +615,10 @@ static void gamestate_init()
 // The simulation thread's scratch pool (128 KB from RFG_scratch_pool).
 void sim_scratch_system_init()
 {
-    // Magic number: 128 KB.
-    void* memory = RFG_scratch_pool.alloc(0x20000, 0);
-    RFG_sim_scratch_pool.init(memory, 0x20000, "Sim Scratch Pool", 4, 0);
+    // Fix (rfgphys's big_buildings does the same in rfg.exe): 2 MB of its own instead of the game's 128 KB from
+    // RFG_scratch_pool (Magic number: 128 KB). The sim thread's scratch blocks ran out under heavy destruction.
+    alignas(16) static unsigned char Sim_scratch_memory[2u << 20];
+    RFG_sim_scratch_pool.init(Sim_scratch_memory, sizeof(Sim_scratch_memory), "Sim Scratch Pool", 4, 0);
     memory_scratch_thread_init(&RFG_sim_scratch_pool);
 }
 

@@ -98,9 +98,16 @@ void rl_compiled_render_group::build(rl_renderer& renderer, rl_render_group* gro
         rl_compiled_render_call* call_p = nullptr;
         unsigned int block_id = 0xFFFFFFFF;
         int offset = 0;
+        // X64 fix: a slot whose transform did not fit in the stream holds 0xFFFF (add_transform failed); the game read
+        // that far into the stream (garbage on x86, past the allocation on x64). Such slots are not drawn.
+        const unsigned int stream_count = (unsigned int)inst_stream->get_num_unique_instances();
         for (unsigned int i = 0; i < group->num_instances; i++)
         {
             const rl_batched_instance& inst = group->instances[i];
+            if ((unsigned int)inst.transform_index >= stream_count)
+            {
+                continue;
+            }
             if (inst.block_id != block_id || call_p == nullptr)
             {
                 call_p = (rl_compiled_render_call*)Call_pool.allocate(sizeof(rl_compiled_render_call), 8);

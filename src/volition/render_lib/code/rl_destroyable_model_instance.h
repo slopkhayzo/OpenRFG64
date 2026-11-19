@@ -130,6 +130,7 @@ private:
 public:
     void invalidate_compiled_data_cache(bool initing); // 0x0053A2E0 (:1443)
     void set_recompile_parameters(rl_mesh_recompile_parameters* params_p); // 0x004BDD00 (.h:209)
+    rl_mesh_recompile_parameters* get_recompile_parameters() const; // new: rl_start_recompile_mesh_instance's fix
     rl_mesh_recompile_data* set_compiled_cache_data(rl_mesh_recompile_data* data_p, rl_mesh_recompile_parameters* params_p); // 0x004BEAC0 (:1908)
     virtual void render(rl_renderer& renderer, rl_camera& camera, unsigned int flags); // vtbl+0x10 0x0053A330 (:1933)
     rl_mesh_recompile_data* compile_cache_data(rl_mesh_recompile_parameters* params_p); // 0x0050D070 (:1527)

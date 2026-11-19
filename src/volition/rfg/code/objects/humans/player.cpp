@@ -1411,9 +1411,12 @@ void player::do_frame()
     {
         wchar_t district_name[128];
         wchar_t message[128];
-        _snprintf_safe(district_name, 128, localization_get_display_string_req(current_district->get_localized_name_hash()));
-        // Original: the district name is formatted and then not used; the message is the format string itself.
-        _snprintf_safe(message, 128, localization_get_display_string_req("HM_NEW_SECTOR", nullptr));
+        // X64 fix: the original uses both localized strings as format strings without arguments. A "%s" in them reads a
+        // missing vararg: harmless garbage on x86, an access violation on x64 (it crashed as a Wrecking Crew match on a
+        // large map began). The name is now an argument, and the message gets the name for its "%s" (an extra argument
+        // is ignored by a format without one).
+        _snprintf_safe(district_name, 128, L"%s", localization_get_display_string_req(current_district->get_localized_name_hash()));
+        _snprintf_safe(message, 128, localization_get_display_string_req("HM_NEW_SECTOR", nullptr), district_name);
         hud_message_add_minor(message, -1.0f, false);
         Player_district = current_district;
         meta_data.set_current_district(current_district);
