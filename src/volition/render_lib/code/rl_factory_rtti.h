@@ -12,6 +12,16 @@
 
 class mempool;
 class rl_base_object;
+class rl_class_factory_info;
+
+// scaling (OpenRFG64-memtest): a factory class may grow. Its pool is filled once, at rl_init, from the factory mempool
+// (sized then from every class's maximum); a class given a ceiling here before rl_init gets more objects whenever its
+// pool runs empty, in a grow-on-demand region of its own, up to the ceiling. Its list of free objects is made for the
+// ceiling at rl_init, so it never moves while the game uses it. on_grow (may be null) hears of every growth.
+void rl_factory_set_growth(rl_class_factory_info& info, int ceiling, void (*on_grow)(const char* class_name, int before, int after));
+int rl_factory_pool_capacity(const rl_class_factory_info& info);  // the free list's size: the ceiling, or the maximum
+int rl_factory_grow_objects(rl_class_factory_info& info, int class_size, unsigned char** objects);  // objects added (0: none)
+bool rl_factory_owns(const rl_class_factory_info& info, const void* object);  // in the class's grown objects
 
 // size 0x30
 class rl_class_factory_info
@@ -67,6 +77,19 @@ public:
     static linked_list_p<rl_class_dynamic_info>* ms_dynamic_classes; // 0x01B7BD0C
 };
 
+// scaling (OpenRFG64-memtest): more objects for a class whose pool is empty (rl_factory_set_growth).
+template<typename CLASS>
+bool rl_factory_grow_pool(rl_class_factory_info& info, pool_list<CLASS*>& pool)
+{
+    unsigned char* objects = nullptr;
+    const int count = rl_factory_grow_objects(info, (int)sizeof(CLASS), &objects);
+    for (int i = 0; i < count; i++)
+    {
+        pool.add((CLASS*)(objects + (size_t)i * sizeof(CLASS)));
+    }
+    return count > 0;
+}
+
 // The class factory macros of render_lib (names inferred; the expansions are recorded at the class's .cpp line, for
 // example rl_shader.cpp:6). A factory class owns a pool of objects_max preallocated objects carved from the factory
 // mempool by factory_init (called by ::factory_init during rl_init); create() pops one, release() destructs it in
@@ -94,8 +117,12 @@ public:
     void CLASS::factory_init(mempool& factory_mempool) \
     { \
         ms_class_factory_info.m_factory_mempool_p = &factory_mempool; \
-        CLASS** elements = (CLASS**)factory_mempool.alloc(ms_class_factory_info.m_objects_max * sizeof(CLASS*), 4); \
-        ms_object_pool.init(elements, ms_class_factory_info.m_objects_max, 0); \
+        /* scaling: a class that grows has its free list made for its ceiling, from the heap. */ \
+        const int pool_capacity = rl_factory_pool_capacity(ms_class_factory_info); \
+        CLASS** elements = pool_capacity > ms_class_factory_info.m_objects_max \
+            ? new CLASS*[pool_capacity] \
+            : (CLASS**)factory_mempool.alloc(ms_class_factory_info.m_objects_max * sizeof(CLASS*), 4); \
+        ms_object_pool.init(elements, pool_capacity > ms_class_factory_info.m_objects_max ? pool_capacity : ms_class_factory_info.m_objects_max, 0); \
         /* Magic number: objects are 16-byte aligned in the factory mempool. */ \
         CLASS* objects = (CLASS*)factory_mempool.alloc(ms_class_factory_info.m_objects_max * sizeof(CLASS), 16); \
         for (int i = 0; i < ms_class_factory_info.m_objects_max; i++) \
@@ -114,11 +141,16 @@ public:
     } \
     CLASS* CLASS::create() \
     { \
-        if (ms_object_pool.size() < 1) \
+        if (ms_object_pool.size() < 1 && !rl_factory_grow_pool(ms_class_factory_info, ms_object_pool)) /* scaling */ \
         { \
             return nullptr; \
         } \
         CLASS* data_p = ms_object_pool.remove_back(); \
+        /* scaling: a class that grows does so ahead of need (rfgphys gives pieces up below 2,000 free instances) */ \
+        if (ms_object_pool.size() < 4096) \
+        { \
+            rl_factory_grow_pool(ms_class_factory_info, ms_object_pool); \
+        } \
         CLASS* object_p = data_p != nullptr ? new (data_p) CLASS() : nullptr; \
         object_p->set_leaf_class_id(CLASS_ID); \
         if (ms_object_pool.size() < 1 && ms_class_factory_info.get_display_exhausted_factories_warning()) \
@@ -129,13 +161,13 @@ public:
     } \
     bool CLASS::can_create() \
     { \
-        return ms_object_pool.size() > 0; \
+        return ms_object_pool.size() > 0 || rl_factory_grow_pool(ms_class_factory_info, ms_object_pool); /* scaling */ \
     }
 
 #define RL_FACTORY_CLASS_RELEASE(CLASS) \
     void CLASS::release() \
     { \
-        if (ms_class_factory_info.m_factory_mempool_p->contains_address(this)) \
+        if (ms_class_factory_info.m_factory_mempool_p->contains_address(this) || rl_factory_owns(ms_class_factory_info, this)) /* scaling */ \
         { \
             if (ms_object_pool.size() < 1 && ms_class_factory_info.get_display_exhausted_factories_warning()) \
             { \

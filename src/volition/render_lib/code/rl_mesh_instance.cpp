@@ -347,7 +347,8 @@ void rl_mesh_instance::add_to_batch(rl_batched_pass* pass_p, const rl_camera* pC
         int transform_index = pass_p->add_transform(info);
         if (transform_index == -1)
         {
-            transform_index = 0xFFFF;
+            // scaling (OpenRFG64-memtest): past any stream; the game's 0xFFFF is a real index past 65,535 transforms
+            transform_index = 0x7FFFFFFF;
         }
         const rl_mesh* mesh_p = (const rl_mesh*)m_renderable_p;
         std::vector<rl_batched_instance*> slots(num_materials > 0 ? num_materials : 0, nullptr);

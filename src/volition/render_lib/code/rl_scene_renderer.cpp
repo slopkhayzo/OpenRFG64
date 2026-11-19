@@ -386,6 +386,12 @@ void rl_scene_renderer::render(rl_renderer& mainRenderer, rl_renderer& deferredR
             m_base_batched_pass = rl_batched_pass::create();
             rl_visibility_manager* visibility_manager = scene.m_visibility_manager_p;
             m_terrain_renderer_p->reset();
+            // scaling (OpenRFG64-memtest): the list grows with the destroyable instances (memtest_debris.cpp), here, before
+            // the visibility threads fill it.
+            if (m_visible_renderable_instances.capacity() < ms_visible_renderable_instances_max)
+            {
+                m_visible_renderable_instances.grow_dynamic(ms_visible_renderable_instances_max);
+            }
             m_visible_renderable_instances.clear();
             m_visible_lights.clear();
             base_array<pool_list<rl_scene_entity*>*>& lists = visibility_manager->m_visibility_lists;

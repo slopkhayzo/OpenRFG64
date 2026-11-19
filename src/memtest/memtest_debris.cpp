@@ -10,7 +10,8 @@
 //
 //   Experiment.KeepDebris=1          OPENRFG_EXPERIMENT_KEEPDEBRIS      keep the debris (single player)
 //   Experiment.DebrisPool=32768      OPENRFG_EXPERIMENT_DEBRISPOOL      general_mover slots (game 3,072; at most 65,000)
-//   Experiment.RenderInstances=65000 OPENRFG_EXPERIMENT_RENDERINSTANCES destroyable render instances (game 2,100)
+//   Experiment.RenderInstances=65000 OPENRFG_EXPERIMENT_RENDERINSTANCES destroyable render instances (game 2,100); with
+//                                    grow-on-demand memory on, where they start: they grow when they run out
 //   Experiment.ZoneReserve=1200      OPENRFG_EXPERIMENT_ZONERESERVE     handles kept free in every world zone
 //
 // The values above are the ones of the installed rfgphys.ini. The run script passes them with -Set (or -KeepDebris).
@@ -21,6 +22,7 @@
 // invulnerable. Memtest.DemolishCycles (default 6) and Memtest.DemolishBlastsPerFrame (default 4).
 
 #include "memtest/memtest.h"
+#include "scaling/scaling.h" // scaling
 
 #include "volition/rfg/code/camera/rfg_camera.h"
 #include "volition/rfg/code/code_effects/explosion.h"
@@ -50,6 +52,7 @@
 #include <atomic>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 #include <vector>
 
 namespace
@@ -57,7 +60,11 @@ namespace
     const int Zone_handles = 7280; // handle_manager<7280> in every world_zone
     const int Recycle_batch = 64; // recycle at least this many at a time
     const unsigned int Max_debris_pool = 65000; // the pool links its elements with 16-bit indices
-    const int Max_render_instances = 65000; // render instances are numbered with 16 bits
+    // scaling (OpenRFG64-memtest): rfgphys found that rfg.exe does nothing with more than 65,000 ("16-bit"); OpenRFG64 numbers
+    // them with nothing narrower than an int (the factory's pool is a list of pointers, the transforms' index an int). So
+    // the setting is only where they start, and with grow-on-demand memory they grow up to the ceiling as they run out.
+    const int Max_render_instances = 1 << 22;
+    const int Render_instances_ceiling = 1 << 22;
     const int Vfx_filter_instances = 4000; // rfgphys: the game crashes when its 500 run out (vfx_effect::init)
 
     // The settings: read once (the first call may come from a static initializer: plain globals only).
@@ -563,6 +570,17 @@ void memtest_recompile_pool_empty()
     }
 }
 
+// scaling: a debris render class grew (its factory ran out); the visible list follows the instances (rl_scene_renderer
+// grows it between frames).
+static void render_class_grew(const char* class_name, int before, int after)
+{
+    if (strcmp(class_name, "rl_destroyable_model_instance") == 0)
+    {
+        rl_scene_renderer::set_visible_renderable_instances_max(rl_scene_renderer::get_visible_renderable_instances_max() + (after - before));
+    }
+    memtest_event("scaling: %s %d -> %d", class_name, before, after);
+}
+
 // game_render_system_init, after the game's maxima and before rl_init sizes the factory from them.
 void memtest_render_limits()
 {
@@ -587,6 +605,15 @@ void memtest_render_limits()
         memtest_event("debris: destroyable render instances %d -> %d, shared bases %d -> %d, visible renderable instances %d, scene renderable instances %d",
                       inst, inst + add, shared, shared + add, rl_scene_renderer::get_visible_renderable_instances_max(),
                       rl_scene::get_renderable_instances_max());
+    }
+    // scaling (step 3): they grow when they run out, with their shared bases and kd-trees (two to an instance).
+    if (scaling_enabled())
+    {
+        rl_factory_set_growth(rl_destroyable_model_instance::ms_class_factory_info, Render_instances_ceiling, &render_class_grew);
+        rl_factory_set_growth(rl_destroyable_model_instance_shared_base::ms_class_factory_info, Render_instances_ceiling, &render_class_grew);
+        rl_factory_set_growth(rl_fp_kdtree::ms_class_factory_info, 2 * Render_instances_ceiling, &render_class_grew);
+        memtest_event("scaling: destroyable render instances grow from %d when they run out, up to %d",
+                      rl_destroyable_model_instance::get_objects_max(), Render_instances_ceiling);
     }
 }
 

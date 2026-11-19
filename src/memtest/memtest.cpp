@@ -1135,7 +1135,8 @@ namespace
         fprintf(f, "  debris (general movers) %10d of %d at the peak (the pool links its elements with 16-bit indices)\n", Peak_movers,
                 openrfg_general_movers_capacity());
         fprintf(f, "  zone object handles     %10d of 7280 at the peak in the fullest zone (a fixed bitmap per zone)\n", Peak_zone_handles);
-        fprintf(f, "  destroyable render inst.%10d of %d at the peak (numbered with 16 bits: at most 65,000)\n\n", Peak_render, Render_max);
+        fprintf(f, "  destroyable render inst.%10d of %d at the peak%s\n\n", Peak_render, Render_max,
+                scaling_enabled() ? " (they grow when they run out)" : "");
         fprintf(f, "debris (rfgphys's keep_debris in the source: %s)\n", Debris.keep ? "on" : "off");
         fprintf(f, "  kept from the game's deletion at shatter %u, deleted by the zone budget %u, fades refused %u, vaporizing refused %u\n",
                 Debris.kept, Debris.gated, Debris.fades_blocked, Debris.vaporize_refused);
@@ -1341,13 +1342,15 @@ void memtest_init()
     {
         memtest_event("wc: will start a Wrecking Crew match on %s from the main menu", Wc_map);
     }
-    // The last census and the summary when the game ends normally (the player quits).
+    // The summary when the game ends normally (the player quits), from what the census recorded while it ran. No last
+    // census: by now main() has ended and the memory system is destroyed, and a pool destroyed inside another one keeps
+    // its base class's vtable (in the image, so read_pool's check passes) and a call into it is a pure virtual call:
+    // abort(), which no __try catches (the first quit of a session, 2026-11-19).
     atexit([]() {
         if (!Initialized)
         {
             return;
         }
-        census();
         write_pools();
         write_summary("the game ended");
         memtest_event("memtest: the game ended at frame %u", Frame);

@@ -409,7 +409,8 @@ void rl_compound_mesh_instance::add_to_batch(rl_batched_pass* pass_p, const rl_c
         int transform_index = pass_p->add_transform(info);
         if (transform_index < 0)
         {
-            transform_index = 0xFFFF;
+            // scaling (OpenRFG64-memtest): past any stream; the game's 0xFFFF is a real index past 65,535 transforms
+            transform_index = 0x7FFFFFFF;
         }
         for (int b = 0; b < submesh.num_render_blocks; b++)
         {

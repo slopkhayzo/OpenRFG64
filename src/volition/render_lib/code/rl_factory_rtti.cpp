@@ -4,6 +4,7 @@
 // circular list during static initialization. ::factory_init (rl_renderer_core.cpp) walks the factory list.
 
 #include "volition/render_lib/code/rl_factory_rtti.h"
+#include "scaling/scaling.h" // scaling
 
 #include <stdlib.h>
 
@@ -47,6 +48,107 @@ rl_class_factory_info::rl_class_factory_info(const char* class_name, unsigned in
     register_class(this);
     m_object_data_base = nullptr;
     m_object_data_size = 0;
+}
+
+// ---- scaling (OpenRFG64-memtest, new): factory classes that grow ------------------------------------------------
+
+namespace
+{
+    struct factory_growth
+    {
+        rl_class_factory_info* info;
+        int ceiling;
+        void (*on_grow)(const char*, int, int);
+        unsigned char* base;  // the grown objects, one after the other (reserved for the ceiling)
+        size_t reserved;
+        int added;            // objects in the region
+    };
+    factory_growth Growths[32];
+    int Growth_count;
+
+    factory_growth* growth_of(const rl_class_factory_info* info)
+    {
+        for (int i = 0; i < Growth_count; i++)
+        {
+            if (Growths[i].info == info)
+            {
+                return &Growths[i];
+            }
+        }
+        return nullptr;
+    }
+}
+
+void rl_factory_set_growth(rl_class_factory_info& info, int ceiling, void (*on_grow)(const char*, int, int))
+{
+    if (!scaling_enabled() || ceiling <= info.m_objects_max)
+    {
+        return;
+    }
+    factory_growth* g = growth_of(&info);
+    if (g == nullptr)
+    {
+        if (Growth_count >= (int)(sizeof(Growths) / sizeof(Growths[0])))
+        {
+            return;
+        }
+        g = &Growths[Growth_count++];
+        g->info = &info;
+    }
+    g->ceiling = ceiling;
+    g->on_grow = on_grow;
+}
+
+int rl_factory_pool_capacity(const rl_class_factory_info& info)
+{
+    const factory_growth* g = growth_of(&info);
+    return g != nullptr && g->ceiling > info.m_objects_max ? g->ceiling : info.m_objects_max;
+}
+
+// A quarter more each time (at least 1,024), committed in the class's region; reserved for the ceiling at the first.
+int rl_factory_grow_objects(rl_class_factory_info& info, int class_size, unsigned char** objects)
+{
+    factory_growth* g = growth_of(&info);
+    if (g == nullptr || info.m_objects_max >= g->ceiling || info.m_factory_mempool_p == nullptr)
+    {
+        return 0;
+    }
+    if (g->base == nullptr)
+    {
+        g->reserved = (size_t)(g->ceiling - info.m_objects_max) * (size_t)class_size;
+        g->base = (unsigned char*)scaling_reserve(info.m_class_name, g->reserved, 0);
+        if (g->base == nullptr)
+        {
+            g->ceiling = 0;
+            return 0;
+        }
+    }
+    int step = info.m_objects_max / 4 > 1024 ? info.m_objects_max / 4 : 1024;
+    if (step > g->ceiling - info.m_objects_max)
+    {
+        step = g->ceiling - info.m_objects_max;
+    }
+    unsigned char* first = g->base + (size_t)g->added * (size_t)class_size;
+    if ((size_t)(g->added + step) * (size_t)class_size > g->reserved || !scaling_commit(first, (size_t)step * (size_t)class_size))
+    {
+        return 0;
+    }
+    const int before = info.m_objects_max;
+    g->added += step;
+    info.m_objects_max += step;
+    if (g->on_grow != nullptr)
+    {
+        g->on_grow(info.m_class_name, before, info.m_objects_max);
+    }
+    *objects = first;
+    return step;
+}
+
+bool rl_factory_owns(const rl_class_factory_info& info, const void* object)
+{
+    const factory_growth* g = growth_of(&info);
+    return g != nullptr && g->base != nullptr && (const unsigned char*)object >= g->base &&
+           (const unsigned char*)object < g->base + g->reserved;
 }
 
 // 0x004B6880 (.h:542)
