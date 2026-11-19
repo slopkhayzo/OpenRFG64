@@ -19,6 +19,7 @@
 //   checking that the object is a mover.
 
 #include "volition/rfg/code/destruction/rfg_dynamics.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/rfg/code/camera/camera_shake.h"
 #include "volition/rfg/code/camera/rfg_camera.h"
@@ -5691,6 +5692,10 @@ float rfg_dyn_get_impulse_scalar(float mass, unsigned char material_index)
 // A removable (0x4) small (not 0x2) mover pushed harder than max_impulse_mag per kg.
 bool rfg_dyn_maybe_delete(object_mover* obj_mover, const float mass, const vector& impulse, const float max_impulse_mag)
 {
+    if (memtest_refuse_vaporize()) // memtest: kept debris takes the impulse instead
+    {
+        return false;
+    }
     return (obj_mover->mover_flags & 4) != 0 && (obj_mover->mover_flags & 2) == 0 && mass * max_impulse_mag < sqrtf(impulse.x * impulse.x + impulse.y * impulse.y + impulse.z * impulse.z);
 }
 

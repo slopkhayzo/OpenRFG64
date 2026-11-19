@@ -29,6 +29,10 @@ namespace keen
         bool containsPointer(void*) const;
         const void* getBaseAddress() const;
         const uint32 getTotalSize() const; // <TlsfAllocator> 0x005D38D0, <ZoneAllocatorAdapter> 0x004D96E0
+        uint32 getAllocatedSize() const { return m_allocatedSize; }       // memtest (new): the census reads them
+        uint32 getMaxAllocatedSize() const { return m_maxAllocatedSize; } // memtest (new)
+        uint32 getAllocationCount() const { return m_allocationCount; }   // memtest (new)
+        const TAllocator& getAllocator() const { return m_allocator; }     // memtest (new)
         bool isFlagSet(uint32) const;
         virtual const char* getName() const; // vtbl+0x0C <TlsfAllocator> 0x005D3700, <ZoneAllocatorAdapter> 0x004D8440
 

@@ -446,6 +446,8 @@ void string_hash_table::load(const unsigned char* data, int& offset)
 // dynamic (heap) pool can hand out blocks GBs apart, so such a table gets one arena right after its own memory.
 struct near_arena { const void* owner; unsigned char* base; unsigned int size; unsigned int used; };
 static near_arena Near_arenas[16];
+void memtest_strpool_fallback();          // memtest: a record had to leave its table's arena
+void memtest_strpool_arena_unregistered(); // memtest: a table found no free arena slot
 static void* near_alloc(const void* owner, mempool_base* pool, unsigned int size, unsigned int align)
 {
 #ifdef OPENRFG_X64
@@ -460,6 +462,7 @@ static void* near_alloc(const void* owner, mempool_base* pool, unsigned int size
                 a.used = pos + size;
                 return a.base + pos;
             }
+            memtest_strpool_fallback(); // memtest: the arena is full
             break;
         }
     }
@@ -480,6 +483,7 @@ static void near_arena_register(const void* owner, unsigned char* base, unsigned
             return;
         }
     }
+    memtest_strpool_arena_unregistered(); // memtest: all 16 slots taken (they are never released)
 #endif
 }
 void openrfg_log(const char*);

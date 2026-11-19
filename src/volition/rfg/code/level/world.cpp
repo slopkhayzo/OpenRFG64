@@ -26,6 +26,7 @@
 //   shutdown_territory_streaming_resources.
 
 #include "volition/rfg/code/level/world_internal.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/rfg/code/camera/rfg_camera.h"
 #include "volition/rfg/code/gamewide/game_trace.h"
@@ -341,6 +342,7 @@ void world::system_init()
         new (decompress_stream) zlib_stream("World decompress stream");
     }
 
+    memtest_fit_world_objects(); // memtest
     // One list per object type, sized by the pools of the classes of that type.
     max_world_objects = 0;
     for (int type = 0; type < NUM_OBJECT_TYPES; type++)
@@ -1116,6 +1118,103 @@ bool world::streaming_is_idle()
 int world::get_num_objects() const
 {
     return all_objects.size();
+}
+
+// memtest (new: declared in world.h, never defined): the census compares get_num_objects with it.
+int world::get_max_world_objects() const
+{
+    return max_world_objects;
+}
+
+// memtest (new): world is a friend of world_zone and of handle_manager, whose bitmaps it reads here.
+const world_zone* world::memtest_fullest_zone(int* used) const
+{
+    const world_zone* fullest = nullptr;
+    int most = 0;
+    for (int z = 0; all_zones != nullptr && z < num_territory_zones; z++)
+    {
+        const world_zone* zone = all_zones[z];
+        if (zone == nullptr)
+        {
+            continue;
+        }
+        int in_use = 0;
+        for (unsigned char bits : zone->obj_handle_mgr.status)
+        {
+            for (; bits != 0; bits &= (unsigned char)(bits - 1))
+            {
+                in_use++;
+            }
+        }
+        if (in_use > most || fullest == nullptr)
+        {
+            most = in_use;
+            fullest = zone;
+        }
+    }
+    if (used != nullptr)
+    {
+        *used = most;
+    }
+    return fullest;
+}
+
+// memtest (new): the most object handles any zone has in use, and how many zones there are.
+int world::memtest_zone_handles_used(int* zones) const
+{
+    if (zones != nullptr)
+    {
+        *zones = all_zones != nullptr ? num_territory_zones : 0;
+    }
+    int most = 0;
+    memtest_fullest_zone(&most);
+    return most;
+}
+
+// memtest (new): with a bigger general_mover pool (memtest_debris_pool), its class maximum sizes the world's object
+// lists; their indices are 16-bit, so all classes together stay within 65,535 objects, and the lists (about 32 bytes
+// an object: the type and subtype lists, all_objects and the handle hash) must fit in the permanent mempool.
+void world::memtest_fit_world_objects()
+{
+    const int ci = obj_class_instantiator::get_class_index_by_subtype(OT_SUB_MOVER_GENERAL);
+    if (ci < 0)
+    {
+        return;
+    }
+    int& gm_max = obj_class_instantiator::max_objects[obj_class_instantiator::class_index[ci]];
+    int total = 0;
+    for (int type = 0; type < NUM_OBJECT_TYPES; type++)
+    {
+        for (int sub_type = OT_SUB_UNDEFINED; sub_type < NUM_OBJECT_SUB_TYPES; sub_type++)
+        {
+            const int class_index = obj_class_instantiator::get_class_index_by_types((object_type)type, (object_sub_type)sub_type);
+            if (class_index >= 0)
+            {
+                total += obj_class_instantiator::max_objects[obj_class_instantiator::class_index[class_index]];
+            }
+        }
+    }
+    const int old = gm_max;
+    int want = old;
+    if (total > 0xFFFF)
+    {
+        want = old - (total - 0xFFFF);
+    }
+    const unsigned int free = Permanent_mempool.space_free();
+    const int game_size = 3072;
+    if (want > game_size && free < (unsigned int)(want - game_size) * 32u + (1u << 20))
+    {
+        want = game_size + (int)(free > (1u << 20) ? (free - (1u << 20)) / 32u : 0u);
+    }
+    if (want < old)
+    {
+        gm_max = want;
+    }
+    if (old != game_size || want != old)
+    {
+        memtest_event("debris: general_mover object lists %d (pool %d), world objects %d -> %d, permanent mempool %u KB free",
+                      gm_max, old, total, total - old + gm_max, free >> 10);
+    }
 }
 
 // 0x00923690 (:1383)

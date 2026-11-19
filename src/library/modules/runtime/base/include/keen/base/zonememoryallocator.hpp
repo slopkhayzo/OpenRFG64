@@ -18,6 +18,7 @@ namespace keen
         void destroy(); // 0x005D0AC0
         void* allocate(uint32 size, uint32 alignment, uint32 flags); // 0x004DB8C0
         void free(void* pMemory); // 0x004D8430
+        uint32 getUsedSize() const { return m_allocator.getAllocatedSize(); } // memtest (new): the zone's top
 
     private:
         ZoneAllocator m_allocator; // 0x00

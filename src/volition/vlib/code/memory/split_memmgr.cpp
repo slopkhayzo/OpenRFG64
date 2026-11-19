@@ -235,6 +235,8 @@ void* split_memmgr::alloc(unsigned int size, const char* debug_name, unsigned in
     {
         dump_mem_usage();
         cs.leave();
+        void memtest_level_alloc_failed(const void* manager, unsigned int size, const char* name); // memtest (src/memtest)
+        memtest_level_alloc_failed(this, size, debug_name);                                         // memtest
         return nullptr;
     }
 

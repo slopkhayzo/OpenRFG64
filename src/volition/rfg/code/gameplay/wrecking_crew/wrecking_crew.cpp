@@ -6,6 +6,7 @@
 // restore. The mode table Wrecking_crew_mode_info holds every mode's callbacks (the five wrecking_crew_mode_*.cpp files).
 
 #include "volition/rfg/code/gameplay/wrecking_crew/wrecking_crew.h"
+#include "memtest/memtest.h" // memtest: the Sledge layer's map entries
 
 #include "volition/rfg/code/camera/camera_third_person.h"
 #include "volition/rfg/code/camera/camera_view.h"
@@ -608,6 +609,32 @@ static void wrecking_crew_parse_wrecking_crew(xml_element* root, int dlc_id)
         Wrecking_crew_map_info[Wrecking_crew_num_maps] = info;
         Wrecking_crew_num_maps++;
     }
+    // memtest: the Sledge layer's map entries for this table (src/memtest): a copy of an entry under another file
+    // name, appended at the end of the table's maps as Sledge's xml edit appends the copied <map> element.
+    {
+        const memtest_wc_map_addition* additions = nullptr;
+        const int count = memtest_wc_map_additions(&additions);
+        for (int a = 0; a < count && Wrecking_crew_num_maps < 32; a++)
+        {
+            if (additions[a].dlc_id != dlc_id || wrecking_crew_get_map_info(additions[a].file) != nullptr)
+            {
+                continue;
+            }
+            const wrecking_crew_map_info* source = wrecking_crew_get_map_info(additions[a].copy_of);
+            wrecking_crew_map_info* info = source != nullptr ? Wrecking_crew_map_pool.alloc(0) : nullptr;
+            if (info == nullptr)
+            {
+                memtest_event("sledge: cannot add Wrecking Crew map %s (no entry %s to copy, or the map pool is full)", additions[a].file, additions[a].copy_of);
+                continue;
+            }
+            *info = *source;
+            info->file_name = Wrecking_crew_string_pool.add_unique(additions[a].file);
+            info->file_name_crc = checksum_stri(info->file_name, 0);
+            Wrecking_crew_map_info[Wrecking_crew_num_maps] = info;
+            Wrecking_crew_num_maps++;
+            memtest_event("sledge: Wrecking Crew map %s added as map %d (a copy of %s's entry)", additions[a].file, Wrecking_crew_num_maps - 1, additions[a].copy_of);
+        }
+    }
 
     const char* mode_names[NUM_WRECKING_CREW_MODES];
     for (int m = 0; m < NUM_WRECKING_CREW_MODES; m++)
@@ -999,6 +1026,10 @@ static bool wrecking_crew_continue_button_pressed()
     if (game_is_paused())
     {
         return false;
+    }
+    if (memtest_wc_continue()) // memtest: unattended runs press continue
+    {
+        return true;
     }
     const float button = ui_get_button_info_and_wait(10, Wrecking_crew_input_id); // magic number 10: the accept button
     const Wc_mouse_click_result click = wrecking_crew_check_mouse_clicks();

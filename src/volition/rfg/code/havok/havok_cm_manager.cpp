@@ -387,3 +387,15 @@ hkpShape* havok_cm_manager_create_cylinder_shape(const vector* endA, const vecto
     b.set(endB->x, endB->y, endB->z, 0.0f);
     return new hkpCylinderShape(a, b, radius, hkConvexShapeDefaultRadius);
 }
+
+// memtest (new, OpenRFG64-memtest src/memtest): the collision model table's fill for the census (32,767 entries,
+// indexed in 16-bit fields of the chunks' data: the first wall of big maps in every build, 64-bit included).
+int openrfg_num_collision_models()
+{
+    return Num_collision_models;
+}
+
+int openrfg_max_collision_models()
+{
+    return MAX_COLLISION_MODELS;
+}

@@ -16,15 +16,25 @@
 #include <stdlib.h>
 #include <string.h>
 
-void* dlmalloc(size_t bytes) { return _aligned_malloc(bytes != 0 ? bytes : 1, 64); }
-void dlfree(void* m) { if (m != nullptr) { _aligned_free(m); } }
+// memtest: the census counts this heap. _aligned_malloc keeps the CRT block's base pointer in the pointer-sized slot
+// below the aligned address, so _msize of that base is the block's size whatever the alignment.
+void memtest_crt_alloc(size_t bytes);
+void memtest_crt_free(size_t bytes);
+static size_t dl_block_size(void* p) { return _msize(*(void**)(((uintptr_t)p - sizeof(void*)) & ~(uintptr_t)(sizeof(void*) - 1))); }
+static void* dl_counted(void* p) { if (p != nullptr) { memtest_crt_alloc(dl_block_size(p)); } return p; }
+
+void* dlmalloc(size_t bytes) { return dl_counted(_aligned_malloc(bytes != 0 ? bytes : 1, 64)); }
+void dlfree(void* m) { if (m != nullptr) { memtest_crt_free(dl_block_size(m)); _aligned_free(m); } }
 void* dlrealloc(void* m, size_t bytes)
 {
     if (m == nullptr) { return dlmalloc(bytes); }
     if (bytes == 0) { dlfree(m); return nullptr; }
-    return _aligned_realloc(m, bytes, 64);
+    const size_t old_size = dl_block_size(m);
+    void* p = _aligned_realloc(m, bytes, 64);
+    if (p != nullptr) { memtest_crt_free(old_size); memtest_crt_alloc(dl_block_size(p)); }
+    return p;
 }
-void* dlmemalign(size_t alignment, size_t bytes) { return _aligned_malloc(bytes != 0 ? bytes : 1, alignment < 64 ? 64 : alignment); }
+void* dlmemalign(size_t alignment, size_t bytes) { return dl_counted(_aligned_malloc(bytes != 0 ? bytes : 1, alignment < 64 ? 64 : alignment)); }
 void* dlvalloc(size_t bytes) { return dlmemalign(4096, bytes); }
 void* dlpvalloc(size_t bytes) { return dlmemalign(4096, (bytes + 4095) & ~(size_t)4095); }
 void* dlcalloc(size_t n, size_t elem_size)

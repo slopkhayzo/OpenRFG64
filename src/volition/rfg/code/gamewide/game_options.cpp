@@ -301,9 +301,16 @@ void game_options_ini_file_read_writer<0>::read_or_write_ini_file(keen::FilePath
 
 // 0x007EE6A0 (:1356)
 // The user settings ini file: <roaming app data>/kaiko/rfg/config.ini.
+const char* memtest_config_ini_path(); // memtest (src/memtest): OPENRFG_CONFIG_INI
 void game_options_load_ini_file_into_cache()
 {
     keen::FilePath path;
+    if (const char* redirect = memtest_config_ini_path()) // memtest: the run's copy, never the user's own settings
+    {
+        path.setCompletePath(redirect, false);
+        game_options_ini_file_read_writer<0>::read_or_write_ini_file(path);
+        return;
+    }
     char folder[0x104];
     if (keen::getKnownWindowsFolder(folder, 0x100, keen::KnownWindowsFolderId_RoamingAppData))
     {
@@ -1024,9 +1031,16 @@ void game_options_ini_file_read_writer<1>::read_or_write_ini_file(keen::FilePath
 
 // 0x007EE770 (:1371)
 // The options cache into <roaming app data>/kaiko/rfg/config.ini, its folders created first.
+const char* memtest_config_ini_path(); // memtest (src/memtest): OPENRFG_CONFIG_INI
 void game_options_write_ini_file_from_cache()
 {
     keen::FilePath path;
+    if (const char* redirect = memtest_config_ini_path()) // memtest: the run's copy, never the user's own settings
+    {
+        path.setCompletePath(redirect, false);
+        game_options_ini_file_read_writer<1>::read_or_write_ini_file(path);
+        return;
+    }
     char folder[0x104];
     if (keen::getKnownWindowsFolder(folder, 0x100, keen::KnownWindowsFolderId_RoamingAppData))
     {

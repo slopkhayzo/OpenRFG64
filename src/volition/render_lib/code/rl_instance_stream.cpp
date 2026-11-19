@@ -5,6 +5,7 @@
 // bytes). add_instance is lock-free (several visibility threads fill one stream).
 
 #include "volition/render_lib/code/rl_instance_stream.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/render_lib/code/rl_factory_rtti.h"
 #include "volition/render_lib/code/rl_gpu_visibility.h"
@@ -141,9 +142,12 @@ void rl_mesh_instance_stream::set_as_render_instance_stream()
 // 0x004C2280 (:138)
 rl_gpu_mesh_instance* rl_mesh_instance_stream::allocate_instances(int& max_allocated)
 {
-    m_base_ptr = new unsigned char[INSTANCE_STREAM_ALLOC_SIZE];
-    m_sizeof_alloc = INSTANCE_STREAM_ALLOC_SIZE;
-    max_allocated = INSTANCE_STREAM_MAX_INSTANCES;
+    // memtest (rfgphys's BatchedCap): the batched cap plus the game's slack over its own cap (0x7627 - 0x6000).
+    const unsigned int entry = INSTANCE_STREAM_ALLOC_SIZE / INSTANCE_STREAM_MAX_INSTANCES; // sizeof(rl_gpu_mesh_instance)
+    const unsigned int count = memtest_batched_cap(0x6000) + (INSTANCE_STREAM_MAX_INSTANCES - 0x6000);
+    m_base_ptr = new unsigned char[count * entry];
+    m_sizeof_alloc = count * entry;
+    max_allocated = (int)count;
     return (rl_gpu_mesh_instance*)m_base_ptr;
 }
 

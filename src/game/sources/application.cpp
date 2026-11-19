@@ -26,6 +26,7 @@
 // The NVIDIA Highlights and Discord calls go to the shipped GfeSDK.dll and discord-rpc.dll (stub_impl.md S2).
 
 #include "game/sources/application.hpp"
+#include "memtest/memtest.h" // memtest: the Sledge mounts
 #include "volition/audio_lib/code/audiolib_api.h"
 #include "volition/vlib/code/input/input_internal.h"
 #include "volition/vlib/code/os/os.h"
@@ -739,6 +740,14 @@ namespace keen
                 pGamebuild = pOverride;
             }
             file::mountNativePath(pFileSystem, "/gamebuild", pGamebuild, false);
+            // memtest: the enabled Sledge mods' files folders (src/memtest, memtest_overlay_find).
+            {
+                const char* pMountName = nullptr;
+                for (int i = 0; const char* pNative = memtest_overlay_mount(i, &pMountName); ++i)
+                {
+                    file::mountNativePath(pFileSystem, pMountName, pNative, false);
+                }
+            }
             copyString(m_nativeGamebuildPath, sizeof(m_nativeGamebuildPath), pGamebuild);
             keen_cf_set_filesystem(GameFramework::getFileSystem(pGameFramework));
             GraphicsSystem* pGraphicsSystem = GameFramework::getGraphicsSystem(pGameFramework);

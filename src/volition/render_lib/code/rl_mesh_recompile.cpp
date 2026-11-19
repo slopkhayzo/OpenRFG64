@@ -8,6 +8,7 @@
 // (s_handshake_start) and keeps it waiting (s_handshake_end) while instances change their sub instances.
 
 #include "volition/render_lib/code/rl_mesh_recompile.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/render_lib/code/rl_batch_defines.h"
 #include "volition/render_lib/code/rl_destroyable_model_instance.h"
@@ -305,6 +306,7 @@ void rl_start_recompile_mesh_instance(rl_destroyable_model_instance* instance_p,
             {
                 _InterlockedExchange((volatile long*)&pending->m_valid, 0);
             }
+            memtest_recompile_pool_empty(); // memtest
         }
         return;
     }

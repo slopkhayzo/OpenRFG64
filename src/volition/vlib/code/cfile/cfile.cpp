@@ -235,6 +235,7 @@ void cf_set_downloadable_content_base_name(const char* name)
 }
 
 // 0x005C21E0 (:547)
+bool memtest_overlay_find(cf_found_info* found_info, const char* filename); // memtest (src/memtest)
 bool cf_find_file(cf_found_info* found_info, const char* filename, bool encrypted)
 {
     Cfile_search_cs.enter();
@@ -243,6 +244,12 @@ bool cf_find_file(cf_found_info* found_info, const char* filename, bool encrypte
     found_info->m_full_name[0] = '\0';
     found_info->m_size = 0;
     found_info->vpe = nullptr;
+    // memtest: the files the enabled Sledge mods register come before every search (Sledge's loader does the same).
+    if (memtest_overlay_find(found_info, filename))
+    {
+        Cfile_search_cs.leave();
+        return true;
+    }
     for (unsigned int i = 0; i < Cfile_num_registered_searches; ++i)
     {
         const cf_registered_search& search = Cfile_registered_searches[i];

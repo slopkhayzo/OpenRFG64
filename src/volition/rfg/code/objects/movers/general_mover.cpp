@@ -20,6 +20,7 @@
 // - get_tag_local_coords returns false without touching the outputs when the chunk is missing.
 
 #include "volition/rfg/code/objects/movers/general_mover.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/rfg/code/code_effects/explosion.h"
 #include "volition/rfg/code/code_effects/material_effects.h"
@@ -86,8 +87,22 @@ static bool Jitter_movers_from_destruction = true; // 0x0169452C
 static general_mover* Pre_stream_mover_list_gen_mover; // 0x0302F10C, movers waiting for their render instance
 static float Mover_jitter_max_translation; // 0x0302F110
 static game_render_task Pre_stream_render_task_gen_mover; // 0x030FCE48, also registered by object_mover_system_init
-static object_pool<general_mover, GENERAL_MOVER_POOL_SIZE, 1> general_moverpool; // 0x031A3A30
-static obj_class_instantiator general_mover_instantiator("general_mover", alloc_general_mover, types_general_mover, bpo_index_general_mover, classname_general_mover, general_mover::pool_remaining, 0xE7C40, GENERAL_MOVER_POOL_SIZE); // 0x031A018C (0x01075D40)
+// memtest: object_pool<general_mover, GENERAL_MOVER_POOL_SIZE, 1> in rfg.exe. The pool gets memtest_debris_pool's slots
+// (rfgphys's Experiment.DebrisPool; the game's 3,072 when it is not set), its storage from memtest_debris_pool_storage
+// (pages of its own), and the class maximum (the world's object lists) follows.
+class general_mover_pool : public dynamic_object_pool<general_mover, 1>
+{
+public:
+    general_mover_pool()
+    {
+        const unsigned int slots = memtest_debris_pool(GENERAL_MOVER_POOL_SIZE);
+        const unsigned int bytes = slots * (unsigned int)(sizeof(general_mover) + sizeof(index_link) + sizeof(unsigned char)) + 64;
+        mempool pool(memtest_debris_pool_storage(bytes), bytes, "general_mover pool", 1, 0);
+        init(pool, slots);
+    }
+};
+static general_mover_pool general_moverpool; // 0x031A3A30
+static obj_class_instantiator general_mover_instantiator("general_mover", alloc_general_mover, types_general_mover, bpo_index_general_mover, classname_general_mover, general_mover::pool_remaining, 0xE7C40, (int)memtest_debris_pool(GENERAL_MOVER_POOL_SIZE)); // 0x031A018C (0x01075D40)
 
 // ---- general_mover (header inlines)
 // 0x006E17A0 (.h:44)
@@ -1689,4 +1704,16 @@ gm_prop_block::gm_prop_block(const vector& pos, const matrix& orient, unsigned i
 // 0x00712980
 gm_prop_block::~gm_prop_block()
 {
+}
+
+// memtest (new, OpenRFG64-memtest src/memtest): the debris pool's fill for the census. 3,072 general movers inline; its
+// free list links elements with 16-bit indices, so no build can take more than 65,535.
+int openrfg_general_movers_in_use()
+{
+    return (int)general_moverpool.get_count(0);
+}
+
+int openrfg_general_movers_capacity()
+{
+    return (int)general_moverpool.get_capacity(); // memtest: the pool's slots (memtest_debris_pool)
 }

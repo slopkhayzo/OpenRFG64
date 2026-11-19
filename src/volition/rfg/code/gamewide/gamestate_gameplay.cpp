@@ -23,6 +23,7 @@
 //   the indent is kept, the times are not printed.
 
 #include "volition/rfg/code/gamewide/gamestate_gameplay.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/audio_lib/code/audiolib_api.h"
 #include "volition/render_lib/code/rl_partition_system.h"
@@ -550,6 +551,7 @@ static void gamestate_gp_simulate_frame()
     fb_accum_blur_update();
     camera_do_frame_post();
     ai_process_target_building_update();
+    memtest_sim_frame(); // memtest: the debris budget and the demolition
 }
 
 // 0x007F0F00 (:979)

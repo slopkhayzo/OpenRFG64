@@ -22,6 +22,7 @@
 //   in Havok_memory_listener_local).
 
 #include "volition/rfg/code/havok/havok_memory.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/allocator/freelist/hkfreelistallocator.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/router/hkmemoryrouter.h"
@@ -229,8 +230,10 @@ havok_memory_listener::~havok_memory_listener()
 
 // 0x0083C120 (:368)
 // The large block allocator is out of memory: free what the game can spare.
+void memtest_havok_out_of_memory(unsigned int size, bool final_failure); // memtest (src/memtest)
 void havok_memory_listener::cannotAllocate(unsigned int size)
 {
+    memtest_havok_out_of_memory(size, false); // memtest
     openrfg_log("DBGHAVOKFAIL cannotAllocate"); // DBGHAVOKFAIL
     havok_set_status(HAVOK_SYSTEM_MEMORY, HAVOK_STATUS_ERROR); // inlined
     havok_reclaim_memory(); // inlined
@@ -264,6 +267,7 @@ void havok_memory_listener::allocationFailure(unsigned int size)
         }
     }
     keen::debug::nativePrintArgs("*** hkLimitedMemoryListener::allocationFailure() just hit, entering infinite loop to avoid hard crash ***");
+    memtest_havok_out_of_memory(size, true); // memtest: writes the census and ends the process instead of the endless loop
     for (;;)
     {
     }
@@ -287,6 +291,7 @@ int havok_memory_watch_dog::getAmountOfFreeHeapMemoryRequested()
 // waits 500 ms; otherwise a garbage collection follows on the next frame (havok_memory_watch_dog_do_frame).
 void havok_memory_watch_dog::freeHeapMemoryTillRequestedAmountIsAvailable(hkpWorld* world)
 {
+    memtest_havok_low_memory(); // memtest
     havok_set_status(HAVOK_SYSTEM_MEMORY, HAVOK_STATUS_WARNING); // inlined
     if (search_delay.elapsed())
     {

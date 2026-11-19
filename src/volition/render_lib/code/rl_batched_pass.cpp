@@ -9,6 +9,7 @@
 // created and released by the scene renderer every frame; the buffers are file statics shared by all passes.
 
 #include "volition/render_lib/code/rl_batched_pass.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/render_lib/code/rl_batch_defines.h"
 #include "volition/render_lib/code/rl_compiled_render_group.h"
@@ -41,8 +42,22 @@ static const unsigned int BATCHED_DECALS_MAX = 0x200;
 static const unsigned int BATCHED_MATERIALS_MAX = 0x400;
 static const unsigned int RENDER_GROUPS_MAX = 0x1000;
 
-static rl_batched_instance Batched_instance_buffer[BATCHED_INSTANCES_MAX]; // 0x01B09A40
-static rl_renderable_instance* Unbatched_renderable_buffer[UNBATCHED_RENDERABLES_MAX]; // 0x01B6EBF8
+// memtest (rfgphys's BatchedCap and UnbatchedCap, in the source): the two lists are as long as
+// memtest_batched_cap / memtest_unbatched_cap (the game's 0x6000 and 0x1000 when not set), made by the first pass.
+// With RenderInstances raised the game's lists overflowed: the frame's instance stream filled, a slot got transform
+// 0xFFFF, and the compiled group read past the stream (rl_compiled_render_group::build).
+static unsigned int batched_instances_max()
+{
+    static const unsigned int n = memtest_batched_cap(BATCHED_INSTANCES_MAX);
+    return n;
+}
+static unsigned int unbatched_renderables_max()
+{
+    static const unsigned int n = memtest_unbatched_cap(UNBATCHED_RENDERABLES_MAX);
+    return n;
+}
+static rl_batched_instance* Batched_instance_buffer; // 0x01B09A40 (an array of BATCHED_INSTANCES_MAX in rfg.exe)
+static rl_renderable_instance** Unbatched_renderable_buffer; // 0x01B6EBF8 (an array of UNBATCHED_RENDERABLES_MAX)
 static rl_batched_decal Batched_decal_buffer[BATCHED_DECALS_MAX]; // 0x01B6AAF8
 static rl_batched_material_info Batched_material_info_buffer[BATCHED_MATERIALS_MAX]; // 0x01B76C08
 static rl_lf_static_hash<uint64_t, rl_batched_material_info, &rl_hash_uint64, 2048> Batched_material_hash; // 0x0150A720
@@ -77,6 +92,11 @@ rl_batched_pass::rl_batched_pass()
     m_transform_stream = rl_mesh_instance_stream::create();
     if (m_transform_stream != nullptr)
     {
+        if (Batched_instance_buffer == nullptr) // memtest
+        {
+            Batched_instance_buffer = new rl_batched_instance[batched_instances_max()];
+            Unbatched_renderable_buffer = new rl_renderable_instance*[unbatched_renderables_max()];
+        }
         m_instances = Batched_instance_buffer;
         m_unbatched_renderables = Unbatched_renderable_buffer;
         m_decals = Batched_decal_buffer;
@@ -134,7 +154,7 @@ void rl_batched_pass::partition_batched_instances()
         {
             continue;
         }
-        if (info.num_instances + first_instance <= BATCHED_INSTANCES_MAX)
+        if (info.num_instances + first_instance <= batched_instances_max()) // memtest
         {
             info.first_instance = first_instance;
             first_instance += info.num_instances;
@@ -188,9 +208,9 @@ void rl_batched_pass::finalize_construction(rl_renderer& renderer)
     Unbatched_instance_watermark = m_num_unbatched_renderables;
     Batched_decal_watermark = m_num_decals;
     Batched_material_watermark = m_num_batched_materials;
-    if (m_num_unbatched_renderables >= UNBATCHED_RENDERABLES_MAX)
+    if (m_num_unbatched_renderables >= unbatched_renderables_max()) // memtest
     {
-        m_num_unbatched_renderables = UNBATCHED_RENDERABLES_MAX;
+        m_num_unbatched_renderables = unbatched_renderables_max();
     }
     if (m_num_decals >= BATCHED_DECALS_MAX)
     {
@@ -265,7 +285,7 @@ bool rl_batched_pass::add_decals(rl_batched_decal* decals, int num_decals)
 bool rl_batched_pass::add_unbatched_renderable_instance(rl_renderable_instance* new_inst)
 {
     const unsigned int index = (unsigned int)_InterlockedExchangeAdd((volatile long*)&m_num_unbatched_renderables, 1);
-    if (index + 1 > UNBATCHED_RENDERABLES_MAX)
+    if (index + 1 > unbatched_renderables_max()) // memtest
     {
         rl_render_lib::get_instance()->m_metrics_p->set_warning_flag(0x200);
         return false;
@@ -333,14 +353,14 @@ rl_batched_instance* rl_batched_pass::allocate_instances(unsigned int mat_handle
 void rl_batched_pass_get_instance_stats(int& high_watermark, int& max_capacity)
 {
     high_watermark = Batched_instance_watermark;
-    max_capacity = BATCHED_INSTANCES_MAX;
+    max_capacity = (int)batched_instances_max(); // memtest
 }
 
 // 0x004BA820 (:403)
 void rl_batched_pass_get_unbatched_renderable_stats(int& high_watermark, int& max_capacity)
 {
     high_watermark = Unbatched_instance_watermark;
-    max_capacity = UNBATCHED_RENDERABLES_MAX;
+    max_capacity = (int)unbatched_renderables_max(); // memtest
 }
 
 // 0x004BA840 (:409)

@@ -25,6 +25,7 @@
 
 #include "volition/rfg/code/havok/havok_mt_query.h"
 #include "volition/rfg/code/havok/havok.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/debugutil/memoryexceptiontestingutil/hkmemoryexceptiontestingutil.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/system/error/hkerror.h"
@@ -1997,6 +1998,8 @@ static void havok_sim_islands_process_post()
             hkpWorldOperationUtil::splitSimulationIsland(Havok_world, island);
             if ((unsigned int)hkpConstraintSolverSetup::calcBufferSize(*island) > Havok_mem_largest_runtime_block)
             {
+                memtest_havok_island_trim(island->m_entities.getSize(), (unsigned int)hkpConstraintSolverSetup::calcBufferSize(*island),
+                                          Havok_mem_largest_runtime_block, island->m_entities.getSize() - 64); // memtest
                 havok_memory_watch_dog_free_memory(Havok_world, island, island->m_entities.getSize() - 64);
             }
         }

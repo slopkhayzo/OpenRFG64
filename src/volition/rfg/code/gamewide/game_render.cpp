@@ -13,6 +13,7 @@
 // the vfx particle pools, the renderable particles, the fog volume and the two morph factories).
 
 #include "volition/rfg/code/gamewide/game_render.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/render_lib/code/rl_camera.h"
 #include "volition/render_lib/code/rl_color.h"
@@ -271,6 +272,7 @@ void game_render_system_init(rl_init_params& rl_params, keen::GraphicsCommandWri
     rl_fp_kdtree::set_objects_max(rl_deformable_mesh_instance::get_objects_max() + rl_skirt_mesh_instance::get_objects_max() + rl_skin_instance::get_objects_max() + rl_destroyable_model_instance_shared_base::get_objects_max() + rl_destroyable_model_instance::get_objects_max());
     rl_morph_container::set_objects_max(0x107);
     rl_dynamic_morph_instance::set_objects_max(0x20);
+    memtest_render_limits(); // memtest: rfgphys's RenderInstances and the effect filters
     rl_init(rl_params);
     game_track_mem_usage_start("game scene creation");
     rl_destroyable_model_instance_system_init(&Level_memmgr, record_destroyable_memory_stats);

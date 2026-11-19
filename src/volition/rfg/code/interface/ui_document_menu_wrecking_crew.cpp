@@ -1367,3 +1367,9 @@ void ui_wrecking_crew_show()
     Gs_switch_pause_beneath = true;
     gameseq_push_state(GS_WC_INIT, true, true);
 }
+
+// memtest (new, src/memtest): the menu's state (MMS_WC_LOADED once its document is up), for the --wc start.
+int openrfg_wc_menu_state()
+{
+    return (int)Menu_wrecking_crew_info.state;
+}

@@ -19,6 +19,8 @@ set(MAIN_SOURCES
     ${OPENRFG_STUBS_COMMON})
 
 add_executable(OpenRFG WIN32 crash_early.cpp main_hooks.cpp main_game_trace.cpp main_ui_command_line.cpp ${MAIN_SOURCES})
+# memtest (OpenRFG64-memtest): the memory census, the Wrecking Crew start, the Sledge layer and the x64 plugins.
+target_sources(OpenRFG PRIVATE ${CMAKE_SOURCE_DIR}/src/memtest/memtest.cpp ${CMAKE_SOURCE_DIR}/src/memtest/memtest_debris.cpp)
 # The Windows resources of rfg.exe (window icon 101, the framework's message texts). They belong to the executable:
 # the program loads them from its own module, and a static library would not carry them into the link.
 target_sources(OpenRFG PRIVATE

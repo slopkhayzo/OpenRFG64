@@ -5,6 +5,7 @@
 // and maps the primitive macro states to rl_render_lib's precreated device states.
 
 #include "volition/render_lib/code/rl_renderer.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/render_lib/code/rl_dyn_texture.h"
 #include "volition/render_lib/code/rl_hdr_compositor.h"
@@ -129,7 +130,10 @@ void rl_renderer::initialize(const rl_init_params& params)
     m_state_p = new rl_state_manager();
     m_state_p->set_screen_info(*m_pRenderLib->get_screen_info());
     // Magic number: 1.5 MB of instance data.
-    m_instancing_buffer = keen::graphics::createGeometryInstancingBuffer(params.m_pKeenGraphicsSystem, Init_params.m_pBufferAllocator, 0x180000);
+    // memtest (rfgphys's BatchedCap): half again as much as one stream when the cap is raised.
+    const unsigned int stream_bytes = (memtest_batched_cap(0x6000) + (0x7627 - 0x6000)) * 0x34;
+    const unsigned int instancing_bytes = stream_bytes <= 0x180000 ? 0x180000 : ((stream_bytes * 3 / 2) + 0xFFFF) & ~0xFFFFu;
+    m_instancing_buffer = keen::graphics::createGeometryInstancingBuffer(params.m_pKeenGraphicsSystem, Init_params.m_pBufferAllocator, instancing_bytes);
     m_pCommonVertexConstants = keen::graphics::createDynamicConstantBuffer(params.m_pKeenGraphicsSystem, 0, sizeof(keen::CommonVertexShaderConstants));
     m_pCommonFragmentConstants = keen::graphics::createDynamicConstantBuffer(params.m_pKeenGraphicsSystem, 0, sizeof(keen::CommonFragmentShaderConstants));
     // Magic number: 64 bones of 3 rows.

@@ -916,9 +916,11 @@ void rfg_init_stage_2_done_2()
 
 // 0x005D2500 (:5273)
 void openrfg_heartbeat();
+void memtest_frame(); // memtest (src/memtest): the census and the Wrecking Crew start
 bool rfg_do_frame()
 {
     openrfg_heartbeat();
+    memtest_frame(); // memtest
     // While the window is in the background the controller vibration is off.
     static bool Lost_focus; // 0x01D651F1
     static bool Vibe_state; // 0x01D651F0

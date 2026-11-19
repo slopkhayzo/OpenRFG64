@@ -1524,6 +1524,12 @@ void rl_scene_renderer::set_visible_renderable_instances_max(int visible_rendera
     ms_visible_renderable_instances_max = visible_renderable_instances_max;
 }
 
+// memtest (declared in the header, never defined): src/memtest raises the maximum with the render instances.
+int rl_scene_renderer::get_visible_renderable_instances_max()
+{
+    return ms_visible_renderable_instances_max;
+}
+
 // 0x004BCE70 (.h:394)
 rl_scene* rl_scene_renderer::get_scene() const
 {

@@ -5,6 +5,7 @@
 // is exhausted.
 
 #include "volition/vlib/code/memory/mempool_base.h"
+#include "memtest/memtest.h" // memtest: the pool registry
 #include "volition/vlib/code/util/string_util.h"
 
 #include "keen/base/trace.hpp"
@@ -25,6 +26,7 @@ void mempool_base::base_init(const char* pool_name, unsigned char mp_flags)
     lock_id = 0;
     locked = false;
     peak_usage = 0;
+    memtest_pool_register(this); // memtest: every pool is in the census
 }
 
 // 0x00589480 (:74)
@@ -41,6 +43,7 @@ mempool_base::mempool_base(const char* pool_name, unsigned char mp_flags)
 // 0x005894E0 (:102)
 mempool_base::~mempool_base()
 {
+    memtest_pool_unregister(this); // memtest
 }
 
 // 0x005AB260 (:141)

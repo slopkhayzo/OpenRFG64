@@ -21,6 +21,8 @@
 #include <stdio.h>
 #endif
 
+void memtest_native_print(const char* text); // memtest (src/memtest): every line the game prints goes to the run's census too
+
 static wchar_t s_logFileName[260]; // 0x038B63B0
 static void* s_logFileHandle = INVALID_HANDLE_VALUE; // 0x016EBEF8
 
@@ -146,6 +148,7 @@ namespace keen
         // 0x00BF4920 (:71)
         void nativePrint(const char* pMessage)
         {
+            memtest_native_print(pMessage); // memtest
             char chunk[1028];
             uint32 chunkLength = 0;
             while (*pMessage != '\0')

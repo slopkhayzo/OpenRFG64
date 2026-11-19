@@ -7,6 +7,7 @@
 // menu is up. Compiled with OPENRFG_UI (rfg_ui).
 
 #include "main_options.h"
+#include "memtest/memtest.h" // memtest: --wc
 
 #include "kaiko/gamelink/gamelink.hpp"
 #include "library/modules/runtime/gamelink/sources/global/lan/gamelinklan.hpp"
@@ -90,6 +91,24 @@ namespace
             return;
         }
         const main_options& options = main_options_get();
+        // memtest (src/memtest): --wc chooses the main menu's Wrecking Crew entry 1.5 s after the menu is up; the
+        // Wrecking Crew menu then starts the match (memtest_frame).
+        if (options.error[0] == '\0' && memtest_wc_map() != nullptr)
+        {
+            static unsigned long long Wc_menu_since = 0;
+            if (Wc_menu_since == 0)
+            {
+                Wc_menu_since = now_ms();
+            }
+            if (now_ms() - Wc_menu_since < 1500)
+            {
+                return;
+            }
+            Main_menu_done = true;
+            keen::debug::nativePrintArgs("[memtest] main menu: Wrecking Crew from the command line (%s)\n", memtest_wc_map());
+            openrfg_main_menu_select(MENU_OPTION_WRECKING_CREW);
+            return;
+        }
         // --sp-load waits for the save data (the local game session hands it over after the boot).
         if (options.error[0] == '\0' && options.sp_load >= 0 && game_save_get_state() != GSS_NONE)
         {

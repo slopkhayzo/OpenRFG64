@@ -59,6 +59,17 @@ namespace keen
         return block;
     }
 
+    // memtest (OpenRFG64-memtest): declared above but never defined; a zone hands out its memory from the start up.
+    inline uint32 ZoneAllocator::getAllocatedSize() const
+    {
+        return (uint32)(m_pCurrentAddress - m_memory.pStart);
+    }
+
+    inline uint32 ZoneAllocator::getCapacity() const
+    {
+        return (uint32)m_memory.size;
+    }
+
     // 0x004DB870
     // nullptr when the zone is full. Magic number: at least 4 bytes are taken.
     inline void* ZoneAllocator::allocate(uint32 size, uint32 alignment)

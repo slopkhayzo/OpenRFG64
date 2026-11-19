@@ -672,8 +672,10 @@ GameLinkInvitationHandler::~GameLinkInvitationHandler()
 {
 }
 
+void memtest_init(); // memtest (src/memtest): the x64 plugins, the Sledge folder, the census files
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR, int)
 {
+    memtest_init(); // memtest
     keen::g_hInstance = hInstance;
     keen::g_prevInstance = hPrevInstance;
     // On this stack frame for the whole run (rfg.exe inlines the constructor and the destructor here). It registers

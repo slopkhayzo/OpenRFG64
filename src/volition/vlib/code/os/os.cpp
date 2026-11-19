@@ -292,7 +292,15 @@ unsigned int os_get_window()
 // 0x005ADA70 (:649)
 bool os_foreground()
 {
-    return Os_app_active;
+    // memtest (OpenRFG64-memtest): unattended runs start the game from a hidden job, where it would quick-pause in
+    // the background; OPENRFG_MEMTEST_IGNOREFOCUS=1 keeps it running (rfgphys's Test.IgnoreFocus).
+    static int Ignore_focus = -1;
+    if (Ignore_focus < 0)
+    {
+        char value[8];
+        Ignore_focus = GetEnvironmentVariableA("OPENRFG_MEMTEST_IGNOREFOCUS", value, sizeof(value)) > 0 && value[0] == '1' ? 1 : 0;
+    }
+    return Ignore_focus == 1 || Os_app_active;
 }
 
 // 0x0058B450 (:654)

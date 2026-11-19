@@ -7,6 +7,7 @@
 // combine draw calls).
 
 #include "volition/render_lib/code/rl_compiled_render_group.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/render_lib/code/rl_batch_defines.h"
 #include "volition/render_lib/code/rl_factory_rtti.h"
@@ -106,6 +107,7 @@ void rl_compiled_render_group::build(rl_renderer& renderer, rl_render_group* gro
             const rl_batched_instance& inst = group->instances[i];
             if ((unsigned int)inst.transform_index >= stream_count)
             {
+                memtest_render_slot_skipped(); // memtest
                 continue;
             }
             if (inst.block_id != block_id || call_p == nullptr)
@@ -346,8 +348,11 @@ void rl_compiled_render_group_reset_call_stats()
 // 0x004E3690 (:763)
 void rl_compiled_render_group_init(keen::MemoryAllocator* pAllocator)
 {
-    Call_pool_memBlock.size = CALL_POOL_SIZE;
-    Call_pool_memBlock.pStart = (uint8*)pAllocator->allocate(CALL_POOL_SIZE, 0x10, 0, nullptr);
+    // memtest (rfgphys's BatchedCap): a call (0x18 bytes) per batched instance at most, never less than the game's.
+    const unsigned int calls = memtest_batched_cap(0x6000) * 0x18u;
+    const unsigned int call_pool_size = calls <= CALL_POOL_SIZE ? CALL_POOL_SIZE : (calls + 0xFFFF) & ~0xFFFFu;
+    Call_pool_memBlock.size = call_pool_size;
+    Call_pool_memBlock.pStart = (uint8*)pAllocator->allocate(call_pool_size, 0x10, 0, nullptr);
     if (Call_pool_memBlock.pStart != nullptr)
     {
         Call_pool.create(Call_pool_memBlock);

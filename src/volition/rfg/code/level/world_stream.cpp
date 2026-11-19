@@ -17,6 +17,7 @@
 //   (h >> 28)] is the zone of handle h; positions map with x = (pos.x + 4088) / 511, y = (4088 - pos.z) / 511.
 
 #include "volition/rfg/code/level/world_internal.h"
+#include "memtest/memtest.h" // memtest
 
 #include "volition/rfg/code/gameplay/wrecking_crew/wrecking_crew.h"
 #include "volition/rfg/code/havok/havok_bp.h"
@@ -248,6 +249,7 @@ void world::collect_sorted_list(base_array<object*>& list, havok_bpi* island)
                     objp = parent != nullptr && *parent != nullptr && !(*parent)->obj_flags.stub ? *parent : nullptr;
                     if (objp == nullptr) // fix: the original reads through null here (debris that outlives its parent)
                     {
+                        memtest_stream_parent_gone(); // memtest
                         break;
                     }
                     parent_handle = objp->parent;

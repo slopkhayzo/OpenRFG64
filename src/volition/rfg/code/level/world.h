@@ -148,6 +148,14 @@ public:
     bool is_zone_border_zone(const vector& pos) const; // 0x0092E110 (world_stream.cpp:324)
     bool get_zone_bbox_from_pos(const vector& pos, vector& bmin, vector& bmax); // 0x0092CEE0 (:1395)
     int get_max_world_objects() const;
+    // memtest (new, OpenRFG64-memtest): the most object handles any zone has in use (each zone has 7,280, a
+    // handle_manager<7280> bitmap), and how many zones there are.
+    int memtest_zone_handles_used(int* zones) const;
+    // memtest (new): the zone with the most handles in use (and how many), for the debris budget (src/memtest).
+    const world_zone* memtest_fullest_zone(int* used) const;
+    // memtest (new): system_init keeps the classes' maxima within the 16-bit object lists when the general_mover
+    // pool is bigger (rfgphys's DebrisPool); obj_class_instantiator's tables are world's to read.
+    void memtest_fit_world_objects();
     const char* get_pending_filename(); // 0x00883810 (.h:230)
     int get_num_objects() const; // 0x00923680 (:1378)
     object* get_object(int i) const; // 0x00923690 (:1383)

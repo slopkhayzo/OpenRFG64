@@ -1949,3 +1949,9 @@ void main_menu_set_pending_state(game_state state)
     Pending_state = state;
     Pending_state_transfer = true;
 }
+
+// memtest (new, src/memtest): the menu's selection callback from outside, for the --wc start.
+void openrfg_main_menu_select(int choice)
+{
+    main_menu_handle_selection(choice);
+}
