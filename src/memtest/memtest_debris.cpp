@@ -519,16 +519,21 @@ void memtest_stream_parent_gone()
     }
 }
 
+// scaling (OpenRFG64-memtest): the lists' capacities are at least 262,144 batched and 65,536 unbatched whatever the
+// settings say (BatchedCap / UnbatchedCap only raise the game's), and those are their most. They are capacities only:
+// the lists and the frame's instance stream are sized from them once (about 40 MB), and a frame draws what it has.
+// Generated buildings place their repeated parts (modules) as instances: ten avenues of tall ones filled the game's
+// 24,576 (+ 5,671 of stream slack) in every frame, and the rest was not drawn (walls missing, windows left).
 unsigned int memtest_batched_cap(unsigned int game)
 {
-    const int v = env_int("OPENRFG_EXPERIMENT_BATCHEDCAP", 0);
-    return v <= (int)game ? game : v > 262144 ? 262144u : (unsigned int)v;
+    (void)env_int("OPENRFG_EXPERIMENT_BATCHEDCAP", 0);
+    return game < 262144u ? 262144u : game;
 }
 
 unsigned int memtest_unbatched_cap(unsigned int game)
 {
-    const int v = env_int("OPENRFG_EXPERIMENT_UNBATCHEDCAP", 0);
-    return v <= (int)game ? game : v > 65536 ? 65536u : (unsigned int)v;
+    (void)env_int("OPENRFG_EXPERIMENT_UNBATCHEDCAP", 0);
+    return game < 65536u ? 65536u : game;
 }
 
 void memtest_render_slot_skipped()
