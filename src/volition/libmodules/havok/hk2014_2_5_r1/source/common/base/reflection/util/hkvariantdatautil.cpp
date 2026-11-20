@@ -226,8 +226,9 @@ void hkVariantDataUtil::newInstance(const hkClass& cls, void* data)
     if (cls.hasVtable())
     {
         const unsigned int memSizeAndRefCount = (unsigned int)(cls.getObjectSize() << 16) | 1;
-        // hkReferencedObject::m_memSizeAndRefCount
-        volatile long* word = reinterpret_cast<volatile long*>(static_cast<char*>(data) + 4);
+        // hkReferencedObject::m_memSizeAndRefCount, right after the vtable pointer (+0x04 in rfg.exe; x64: +0x08, where
+        // +4 left the size 0 and the object never freed)
+        volatile long* word = reinterpret_cast<volatile long*>(static_cast<char*>(data) + sizeof(void*));
         long oldValue;
         do
         {
