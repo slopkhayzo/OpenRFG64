@@ -24,6 +24,7 @@ namespace keen
         bool checkIntegrity() const; // 0x00BF2FE0
         const MemoryBlock& getMemoryBlock() const;
         static uint32 getAllocationOverhead(); // 0x00BF2F40
+        void* getPool() const { return m_pPool; } // memtest (new): the TLSF pool (tlsf_walk_heap)
 
     private:
         MemoryBlock m_memoryBlock; // 0x00

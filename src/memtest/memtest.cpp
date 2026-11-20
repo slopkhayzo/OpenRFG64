@@ -13,6 +13,10 @@
 
 // The game's headers first, then windows.h (OpenRFG's order: winsock2 must come before any windows.h).
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/system/hkmemorysystem.h"
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/object/hkreferencedobject.h" // Memtest.HavokCensus
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/allocator/freelist/hkfreelist.h"
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/allocator/freelist/hkfreelistallocator.h"
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/system/freelist/hkfreelistmemorysystem.h"
 #include "volition/rfg/code/gameplay/wrecking_crew/wrecking_crew.h"
 #include "volition/rfg/code/gamewide/gameseq.h"
 #include "volition/rfg/code/interface/localization/localization_shared.h"
@@ -26,9 +30,17 @@
 #include "volition/vlib/code/util/endian_type.h"
 #include "keen/base/tlsfmemoryallocator.hpp"
 #include "keen/base/zonememoryallocator.hpp"
+#include "keen/base/mutex.hpp"
+#include "library/modules/thirdparty/tlsf/tlsf.h" // the audio bank walk
 
 #include <windows.h>
 #include <psapi.h>
+
+#include <algorithm>
+#include <typeinfo>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include <ctype.h>
 #include <share.h>
@@ -1281,6 +1293,173 @@ namespace
 #endif
     }
 
+    // ---- Memtest.HavokCensus=1 (OPENRFG_MEMTEST_HAVOKCENSUS): Havok's live counted objects (hkReferencedObjectTracker:
+    // told of every counted object's construction and of every destruction), by class, before each Wrecking Crew load
+    // and at each round's end: what a level's unload leaves in Havok's heap. The set lives on the C runtime heap.
+    SRWLOCK Hk_lock = SRWLOCK_INIT;
+    std::unordered_set<const hkReferencedObject*>* Hk_live = nullptr;
+    unsigned long long Hk_constructed = 0;
+    unsigned long long Hk_destructed = 0;
+
+    void hk_track(const hkReferencedObject* object, bool alive)
+    {
+        AcquireSRWLockExclusive(&Hk_lock);
+        if (alive)
+        {
+            Hk_live->insert(object);
+            Hk_constructed++;
+        }
+        else if (Hk_live->erase(object) != 0)
+        {
+            Hk_destructed++;
+        }
+        ReleaseSRWLockExclusive(&Hk_lock);
+    }
+
+    // Havok's heap by where its memory is: the system allocator (hkLargeBlockAllocator: the free lists' blocks and every
+    // allocation past MAX_FREELIST_SIZE), each free list's blocks, live and free elements (havok_memory_init's setup).
+    void hk_heap_breakdown(const char* when)
+    {
+        hkFreeListMemorySystem* system = static_cast<hkFreeListMemorySystem*>(hkMemorySystem::getInstancePtr());
+        if (system == nullptr || system->m_heapAllocator == nullptr || system->m_systemAllocator == nullptr)
+        {
+            return;
+        }
+        hkFreeListAllocator* heap = static_cast<hkFreeListAllocator*>(system->m_heapAllocator);
+        hkMemoryAllocator::MemoryStatistics sys;
+        system->m_systemAllocator->getMemoryStatistics(sys);
+        long long blocks = 0;
+        long long live = 0;
+        long long free_elements = 0;
+        const double mb = 1048576.0;
+        for (int i = 0; i < heap->m_numFreeLists + 1; i++)
+        {
+            const hkFreeList* list = i == heap->m_numFreeLists ? &heap->m_blockAllocator.m_freeList : heap->m_freeLists[i];
+            if (list == nullptr)
+            {
+                continue;
+            }
+            hkMemoryAllocator::MemoryStatistics s;
+            list->getMemoryStatistics(s);
+            blocks += s.m_allocated;
+            live += s.m_inUse;
+            free_elements += s.m_available;
+            if (s.m_allocated >= 4 * 1048576)
+            {
+                memtest_event("  free list of %u-byte elements: %.1f MB of blocks, %.1f MB live, %.1f MB free", list->m_elementSize,
+                              (double)s.m_allocated / mb, (double)s.m_inUse / mb, (double)s.m_available / mb);
+            }
+        }
+        memtest_event("havok heap (%s): system allocator %.1f MB in use; free lists %.1f MB of blocks (%.1f MB live, %.1f MB free); "
+                      "allocations past the free lists %.1f MB",
+                      when, (double)sys.m_inUse / mb, (double)blocks / mb, (double)live / mb, (double)free_elements / mb,
+                      (double)(sys.m_inUse - blocks) / mb);
+    }
+
+    // The audio bank allocator (RFG_Audio_Bank, TLSF over 190 MB) by its blocks, under its lock: whether a level's
+    // banks are still there when the next one loads (its keen counters are not kept: they read 0 in use).
+    struct tlsf_sum
+    {
+        unsigned long long used = 0;
+        unsigned long long free_bytes = 0;
+        unsigned long long largest_free = 0;
+        unsigned int used_blocks = 0;
+        unsigned int free_blocks = 0;
+        char big[192] = "";
+        size_t big_len = 0;
+    };
+
+    void tlsf_sum_walker(void* ptr, size_t size, int used, void* user)
+    {
+        tlsf_sum& s = *static_cast<tlsf_sum*>(user);
+        if (used != 0)
+        {
+            s.used += size;
+            s.used_blocks++;
+            if (size >= 4 * 1048576 && s.big_len < sizeof(s.big) - 24)
+            {
+                const int w = snprintf(s.big + s.big_len, sizeof(s.big) - s.big_len, " %.1f", (double)size / 1048576.0);
+                s.big_len += w > 0 ? (size_t)w : 0;
+            }
+        }
+        else
+        {
+            s.free_bytes += size;
+            s.free_blocks++;
+            s.largest_free = size > s.largest_free ? size : s.largest_free;
+        }
+        (void)ptr;
+    }
+
+    void audio_bank_walk(const char* when)
+    {
+        keen::MutexLock lock(Rfg_audio_bank_keen_allocator.getMutex());
+        void* pool = Rfg_audio_bank_keen_allocator.getAllocator().getPool();
+        if (pool == nullptr)
+        {
+            return;
+        }
+        tlsf_sum s;
+        tlsf_walk_heap(pool, tlsf_sum_walker, &s);
+        memtest_event("audio banks (%s): %u blocks in use, %.1f MB (those of 4 MB or more:%s MB); %u free blocks, %.1f MB, the largest %.1f MB",
+                      when, s.used_blocks, (double)s.used / 1048576.0, s.big_len > 0 ? s.big : " none", s.free_blocks,
+                      (double)s.free_bytes / 1048576.0, (double)s.largest_free / 1048576.0);
+    }
+
+    void hk_census(const char* when)
+    {
+        if (Hk_live == nullptr)
+        {
+            return;
+        }
+        struct row
+        {
+            size_t count = 0;
+            unsigned long long bytes = 0; // the objects' memory sizes (0 for AUTO_MEMSIZE: made by new, size unknown)
+            size_t auto_size = 0;
+            const hkReferencedObject* sample = nullptr;
+        };
+        std::unordered_map<const void*, row> by_vtable;
+        size_t total = 0;
+        unsigned long long total_bytes = 0;
+        AcquireSRWLockShared(&Hk_lock);
+        for (const hkReferencedObject* o : *Hk_live)
+        {
+            row& r = by_vtable[*reinterpret_cast<const void* const*>(o)];
+            const int size = o->getMemorySizeAndFlags();
+            r.count++;
+            if (size == hkReferencedObject::AUTO_MEMSIZE)
+            {
+                r.auto_size++;
+            }
+            else
+            {
+                r.bytes += (unsigned int)size;
+                total_bytes += (unsigned int)size;
+            }
+            r.sample = o;
+            total++;
+        }
+        const unsigned long long constructed = Hk_constructed;
+        const unsigned long long destructed = Hk_destructed;
+        std::vector<row> rows;
+        rows.reserve(by_vtable.size());
+        for (const auto& kv : by_vtable)
+        {
+            rows.push_back(kv.second);
+        }
+        std::sort(rows.begin(), rows.end(), [](const row& a, const row& b) { return a.count > b.count; });
+        memtest_event("havok census (%s): %zu live counted objects in %zu classes, %.1f MB of known sizes (%llu counted constructed, %llu destructed so far)",
+                      when, total, rows.size(), (double)total_bytes / 1048576.0, constructed, destructed);
+        for (size_t i = 0; i < rows.size() && i < 24; i++)
+        {
+            memtest_event("  %9zu %-56s %8.1f MB of known sizes, %zu made by new", rows[i].count, typeid(*rows[i].sample).name(),
+                          (double)rows[i].bytes / 1048576.0, rows[i].auto_size);
+        }
+        ReleaseSRWLockShared(&Hk_lock); // the samples stay alive while the names are read
+        hk_heap_breakdown(when);
+    }
+
     void wc_drive()
     {
         if (Wc_map == nullptr || Wc_started)
@@ -1430,6 +1609,8 @@ namespace
                       (int)Wrecking_crew_options.mode, Wrecking_crew_options.num_players, Wrecking_crew_options.weapon_index,
                       Wrecking_crew_options.free_play ? 1 : 0);
         memtest_event("wc: before this load: big containers %.1f MB committed, far table %u entries", big_committed_mb(), far_entries());
+        hk_census("before this load");
+        audio_bank_walk("before this load");
         Wc_started_ms = now;
         wrecking_crew_match_begin();
     }
@@ -1459,6 +1640,8 @@ namespace
         Wc_menu_again = true;
         memtest_event("wc: round over (%d more): to the main menu; big containers %.1f MB committed, far table %u entries",
                       Wc_repeats, big_committed_mb(), far_entries());
+        hk_census("at the round's end");
+        audio_bank_walk("at the round's end");
         game_set_wc_shutdown(GS_MAINMENU);
     }
 }
@@ -1485,6 +1668,12 @@ void memtest_init()
     }
     Initialized = true;
     Start_ms = GetTickCount64();
+    if (env_int("OPENRFG_MEMTEST_HAVOKCENSUS", 0) != 0) // before the game makes its Havok objects
+    {
+        Hk_live = new std::unordered_set<const hkReferencedObject*>();
+        Hk_live->reserve(1 << 22);
+        hkReferencedObjectTracker = hk_track;
+    }
     scaling_static_init_done(); // scaling: pools made from now on keep the game's fixed storage
 #ifdef OPENRFG_X64
     et_far::On_new_entry = note_far_entry;

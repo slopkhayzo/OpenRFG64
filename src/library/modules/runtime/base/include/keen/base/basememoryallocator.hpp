@@ -33,6 +33,7 @@ namespace keen
         uint32 getMaxAllocatedSize() const { return m_maxAllocatedSize; } // memtest (new)
         uint32 getAllocationCount() const { return m_allocationCount; }   // memtest (new)
         const TAllocator& getAllocator() const { return m_allocator; }     // memtest (new)
+        Mutex* getMutex() const { return const_cast<Mutex*>(&m_mutex); } // memtest (new): a walk of its blocks under its lock
         bool isFlagSet(uint32) const;
         virtual const char* getName() const; // vtbl+0x0C <TlsfAllocator> 0x005D3700, <ZoneAllocatorAdapter> 0x004D8440
 
