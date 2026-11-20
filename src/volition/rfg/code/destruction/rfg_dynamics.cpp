@@ -4131,7 +4131,7 @@ void rfg_dyn_do_frame_pre()
         {
             shape->flags &= ~0xC;
             shape->destruction_mode_timer.invalidate();
-            havok_body_set_collision_type(rm->havok_handle, rfg_dyn_get_filter_by_move_type(rm->get_move_type(), shape->flags), false, false); // inlined
+            havok_body_set_collision_type(rm->havok_handle, memtest_mover_collision_type(shape, rfg_dyn_get_filter_by_move_type(rm->get_move_type(), shape->flags)), false, false); // inlined; memtest: a ground slab is terrain
         }
         if ((shape->flags & 8) != 0 && rm->get_move_type() != RFGM_FIXED && rm->slice_delay.elapsed())
         {

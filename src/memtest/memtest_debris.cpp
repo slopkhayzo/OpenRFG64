@@ -719,9 +719,8 @@ namespace
     }
 
     // Every element of its shape named "ground", "groundN" or "apronN", one of them at least a ground.
-    bool is_ground_slab(rfg_mover* rm)
+    bool is_ground_shape(const rfg_destroyable_shape* shape)
     {
-        const rfg_destroyable_shape* shape = rm->get_shape();
         if (shape == nullptr || shape->parent == nullptr || shape->parent->num_dlods <= 0)
         {
             return false;
@@ -739,6 +738,13 @@ namespace
         }
         return ground;
     }
+
+    bool is_ground_slab(rfg_mover* rm)
+    {
+        return is_ground_shape(rm->get_shape());
+    }
+
+    std::atomic<unsigned int> Ground_typed{ 0 }; // the slab's type given at its creation and the game's resets
 
     void ground_slab_frame()
     {
@@ -890,6 +896,23 @@ bool memtest_refuse_vaporize()
     }
     Vaporize_refused.fetch_add(1, std::memory_order_relaxed);
     return true;
+}
+
+// A fixed mover's collision type where the game sets it (its creation, set_move_type, the end of its destruction
+// mode): a map's ground slab gets the terrain's (ground_slab_frame explains why), single player only.
+unsigned int memtest_mover_collision_type(const rfg_destroyable_shape* shape, unsigned int collision_type)
+{
+    read_settings();
+    if (!Ground_as_terrain || Multiplayer || collision_type != COLLIDE_RFG_INITIAL_POSITION || !is_ground_shape(shape))
+    {
+        return collision_type;
+    }
+    if (Ground_typed.fetch_add(1, std::memory_order_relaxed) < 8)
+    {
+        memtest_event("ground: a ground slab (%d elements) gets the terrain's collision type %08X instead of %08X", shape->parent->num_dlods,
+                      COLLIDE_WORLD, collision_type);
+    }
+    return COLLIDE_WORLD;
 }
 
 void memtest_stream_parent_gone()

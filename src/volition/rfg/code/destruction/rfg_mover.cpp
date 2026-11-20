@@ -40,6 +40,7 @@
 // - script_point_destroy dereferences the shape without checking it.
 
 #include "volition/rfg/code/destruction/rfg_mover.h"
+#include "memtest/memtest.h" // memtest: a map's ground slab is terrain
 
 #include "volition/rfg/code/ai/ai_building_logic.h"
 #include "volition/rfg/code/code_effects/glass.h"
@@ -2618,7 +2619,7 @@ void rfg_mover::add_to_world(rfg_move_type initial_move_type)
             initial_move_type = RFGM_NORMAL;
         }
     }
-    pci.collision_type = rfg_dyn_get_filter_by_move_type(initial_move_type, shape->flags);
+    pci.collision_type = memtest_mover_collision_type(shape, rfg_dyn_get_filter_by_move_type(initial_move_type, shape->flags)); // memtest: a ground slab is terrain
     pci.auto_remove_level = 0;
     if (movable)
     {
@@ -2693,6 +2694,7 @@ void rfg_mover::set_move_type(rfg_move_type mt, bool force)
         collision_type = COLLIDE_NO_COLLISION;
         break;
     }
+    collision_type = memtest_mover_collision_type(shape, collision_type); // memtest: a ground slab is terrain
     havok_body_set_collision_type(havok_handle, collision_type, false, false);
     havok_body_set_motion_type(havok_handle, havok_motion_type_from_move_type(mt)); // inlined
     havok_body_set_collision_quality(havok_handle, collidable_quality_from_move_type(mt)); // inlined

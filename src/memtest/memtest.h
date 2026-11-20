@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 class mempool_base;
+class rfg_destroyable_shape;
 struct cf_found_info;
 
 // ---- lifecycle
@@ -100,6 +101,8 @@ struct memtest_fade_scope                                              // caller
 };
 int memtest_shatter_deletes(int pieces, int deletes);                  // rfgl_desired_values: the pieces a shatter deletes
 bool memtest_refuse_vaporize();                                        // rfg_dyn_maybe_delete: no "vaporized" pieces
+// A fixed mover's collision type where the game sets it: a map's ground slab gets the terrain's (memtest_debris.cpp)
+unsigned int memtest_mover_collision_type(const rfg_destroyable_shape* shape, unsigned int collision_type);
 void memtest_stream_parent_gone();                                     // world::collect_sorted_list: a parent that is gone
 void memtest_recompile_pool_empty();                                   // rl_start_recompile_mesh_instance: no request free
 unsigned int memtest_batched_cap(unsigned int game);                   // rfgphys's BatchedCap: instances drawn batched a frame
