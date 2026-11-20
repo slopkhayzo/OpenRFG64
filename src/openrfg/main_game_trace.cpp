@@ -51,9 +51,14 @@ namespace
         return Previous_filter != nullptr ? Previous_filter(pointers) : EXCEPTION_CONTINUE_SEARCH;
     }
 
-    // The largest free block of the address space, in MB.
+    // The largest free block of the address space, in MB. X64 fix: not measured (0): a 64-bit process has some 128 TB
+    // free, and the walk goes region by region through all of it on the main thread at every status line; with a
+    // session's grow-on-demand regions it held a frame for 6 s.
     unsigned int largest_free_block()
     {
+#ifdef OPENRFG_X64
+        return 0;
+#else
         SIZE_T largest = 0;
         MEMORY_BASIC_INFORMATION info;
         for (const char* address = nullptr; VirtualQuery(address, &info, sizeof(info)) == sizeof(info); address = (const char*)info.BaseAddress + info.RegionSize)
@@ -68,6 +73,7 @@ namespace
             }
         }
         return (unsigned int)(largest >> 20);
+#endif
     }
 
     void write_status(int frames, long elapsed)
