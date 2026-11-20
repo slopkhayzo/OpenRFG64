@@ -29,6 +29,7 @@
 
 #include "volition/vlib/code/bmpman/bmpman.h"
 
+#include "volition/rfg/code/gamewide/game_trace.h" // OpenRFG: the "bmcheck" lines of bm_repair_entries_into and bm_get_entry
 #include "volition/vlib/code/cfile/cfile.h"
 #include "volition/vlib/code/cfile/cfile_internal.h"
 #include "volition/vlib/code/memory/dynamic_mempool.h"
@@ -40,6 +41,7 @@
 
 #include "keen/base/trace.hpp"
 
+#include <intrin.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -86,6 +88,11 @@ static void (*Bm_discovery_callback)(bitmap_entry*); // 0x01CE8650
 static peg_entry* Bogus_static_bitmap_peg_entry; // 0x01CE8654
 static bitmap_entry* Bogus_static_bitmap_entry; // 0x01CE8658
 static cs_wrapper Bm_add_lock(0); // 0x01D08EE0
+// OpenRFG: serializes the edits of the bitmaps' entry lists (bm_register_peg, bm_unregister_peg). The streamed pegs
+// register on the stream2 load thread (GSP_PEG is load_threaded) while the main thread unregisters others; rfg.exe
+// edits the lists from both without a lock. Not Bm_add_lock: bm_add_peg can leave that one held (see the file comment).
+static cs_wrapper Bm_list_lock(0);
+static int Bm_check_repairs = 0; // entries found pointing into a peg after its unload (bm_repair_entries_into)
 
 // The peg entries follow the header.
 static peg_entry* peg_get_entry(peg_header* header, int index)
@@ -466,6 +473,7 @@ static int bm_load_bitmaps_file(mempool_base* pool)
 // Links every entry of the peg to its bitmap handle (see the file comment for the advance).
 static bool bm_register_peg(peg_file* p)
 {
+    cs_scope list_scope(Bm_list_lock); // OpenRFG
     int i = 0;
     while (i < p->header->total_entries)
     {
@@ -508,6 +516,7 @@ static void bm_unregister_peg(peg_file* p, int entries_to_remove)
     {
         return;
     }
+    cs_scope list_scope(Bm_list_lock); // OpenRFG
     if (entries_to_remove == -1)
     {
         entries_to_remove = p->header->total_entries;
@@ -903,6 +912,108 @@ peg_header* bm_load_peg_header(const char* filename, mempool_base* pool)
     return bm_fixup_peg_header(filename, peg_data, header.dir_block_size, nullptr, 0, false) ? (peg_header*)peg_data : nullptr;
 }
 
+// OpenRFG: whether pe lies in the entries [lo, hi) of a peg.
+static bool bm_entry_in(const peg_entry* pe, const unsigned char* lo, const unsigned char* hi)
+{
+    return (const unsigned char*)pe >= lo && (const unsigned char*)pe < hi;
+}
+
+// OpenRFG: no bitmap may point into a peg once it is unloaded. An entry left in a bitmap's list (its unregister missed
+// it, or a list edit on the load thread raced one on the main thread) reads the next container's data once the stream
+// slot is reused. The campaign crash: the bitmap shown through such an entry read a garbage num_frames, bm_get_entry
+// sent its animation frame past the table, and the render thread faulted in get_dev_texture. So after the unregister,
+// every bitmap's list is swept for entries in [lo, hi) (the peg's memory is still there: the container frees it after
+// the unload callbacks); each one is unlinked, the head replaced by the next entry or the bogus bitmap, and a "bmcheck"
+// line written. A list that cannot be read (an older stale entry) is left as it is and reported.
+static void bm_repair_entries_into(const unsigned char* lo, const unsigned char* hi, const char* peg_name)
+{
+    static int logged = 0;
+    peg_entry* const bogus = Bogus_static_bitmap_entry != nullptr ? Bogus_static_bitmap_entry->current_peg_entry : nullptr;
+    const int repairs_before = Bm_check_repairs;
+    for (int handle = 0; handle < Bm_entry_count; handle++)
+    {
+        bitmap_entry* const be = &Bm_bitmaps[handle];
+        peg_entry* const head = be->current_peg_entry;
+        if (head == nullptr || head == bogus)
+        {
+            continue;
+        }
+        __try
+        {
+            // The shown entry: the first one of its list outside the peg, else the bogus bitmap.
+            int steps = 0;
+            peg_entry* shown = head;
+            while (shown != nullptr && bm_entry_in(shown, lo, hi) && steps++ < 64)
+            {
+                shown = shown->next.to_pointer();
+            }
+            if (shown != head)
+            {
+                if (logged++ < 200)
+                {
+                    GAME_TRACE("bmcheck", "peg %s unloaded: bitmap %d (%s) still showed its entry %d; now %s", peg_name, handle, be->filename_ptr != nullptr ? be->filename_ptr : "-", (int)(((const unsigned char*)head - lo) / (int)sizeof(peg_entry)), shown != nullptr && !bm_entry_in(shown, lo, hi) ? "the next entry" : "the bogus bitmap");
+                }
+                if (shown != nullptr && !bm_entry_in(shown, lo, hi))
+                {
+                    shown->prev.set_offset(-1);
+                    be->current_peg_entry = shown;
+                }
+                else
+                {
+                    be->current_peg_entry = bogus;
+                    be->frame_number = Bogus_static_bitmap_entry != nullptr ? Bogus_static_bitmap_entry->frame_number : 0;
+                    shown = nullptr;
+                }
+                Bm_check_repairs++;
+            }
+            // The rest of the list: runs of the peg's entries are unlinked.
+            peg_entry* prev = shown;
+            steps = 0;
+            while (prev != nullptr && steps++ < 64)
+            {
+                peg_entry* next = prev->next.to_pointer();
+                if (next != nullptr && bm_entry_in(next, lo, hi))
+                {
+                    peg_entry* after = next;
+                    int skipped = 0;
+                    while (after != nullptr && bm_entry_in(after, lo, hi) && skipped++ < 64)
+                    {
+                        after = after->next.to_pointer();
+                    }
+                    if (logged++ < 200)
+                    {
+                        GAME_TRACE("bmcheck", "peg %s unloaded: bitmap %d (%s) still listed its entry %d", peg_name, handle, be->filename_ptr != nullptr ? be->filename_ptr : "-", (int)(((const unsigned char*)next - lo) / (int)sizeof(peg_entry)));
+                    }
+                    prev->next.from_pointer(after);
+                    if (after != nullptr)
+                    {
+                        after->prev.from_pointer(prev);
+                    }
+                    Bm_check_repairs++;
+                    next = after;
+                }
+                prev = next;
+            }
+        }
+        __except (1 /* EXCEPTION_EXECUTE_HANDLER */)
+        {
+            if (logged++ < 200)
+            {
+                GAME_TRACE("bmcheck", "peg %s unloaded: bitmap %d (%s) has an unreadable entry list", peg_name, handle, be->filename_ptr != nullptr ? be->filename_ptr : "-");
+            }
+        }
+    }
+    if (Bm_check_repairs != repairs_before)
+    {
+        GAME_TRACE("bmcheck", "peg %s unloaded: %d bitmap entries still pointed into it, repaired (%d this session)", peg_name, Bm_check_repairs - repairs_before, Bm_check_repairs);
+    }
+    static int sweeps = 0;
+    if (++sweeps == 1 || sweeps % 100 == 0)
+    {
+        GAME_TRACE("bmcheck", "%d peg unloads swept (the last: %s, %d bitmaps), %d entries repaired", sweeps, peg_name, Bm_entry_count, Bm_check_repairs);
+    }
+}
+
 // 0x005C75C0 (:1428)
 void bm_unload_peg(const char* filename)
 {
@@ -911,7 +1022,15 @@ void bm_unload_peg(const char* filename)
     {
         return;
     }
+    cs_scope list_scope(Bm_list_lock); // OpenRFG
+    // OpenRFG: the peg's entries, for the sweep after the unregister (which clears p->header).
+    const unsigned char* const entries_lo = p->header != nullptr ? (const unsigned char*)(p->header + 1) : nullptr;
+    const unsigned char* const entries_hi = p->header != nullptr ? entries_lo + p->header->total_entries * (int)sizeof(peg_entry) : nullptr;
     bm_unregister_peg(p, -1);
+    if (entries_lo != nullptr)
+    {
+        bm_repair_entries_into(entries_lo, entries_hi, filename);
+    }
     char name[BM_NAME_MAX];
     cf_drop_ext(name, BM_NAME_MAX, filename);
     Bm_pegs.remove(name);
@@ -1156,7 +1275,19 @@ bitmap_entry* bm_get_entry(int handle, bool auto_animate)
             // Magic number: fps * 0.001 frames per millisecond (rounded to float first).
             const float frames_per_ms = (float)(Bm_bitmaps[handle].current_peg_entry->fps * 0.001);
             const int frame = (int)(frames_per_ms * (float)Frametime_total_milliseconds);
-            handle += frame % (int)num_frames;
+            // OpenRFG: a frame past the table means the shown peg entry is not one any more (its peg was unloaded under
+            // the bitmap and the memory reused, see bm_repair_entries_into): no bitmap instead of a read past the table.
+            const int animated = handle + frame % (int)num_frames;
+            if (animated >= Bm_entry_count)
+            {
+                static volatile long logged = 0;
+                if (_InterlockedIncrement(&logged) <= 20)
+                {
+                    GAME_TRACE("bmcheck", "bitmap %d (%s): frame %d of %u is past the table, its peg entry %p is stale", handle, Bm_bitmaps[handle].filename_ptr != nullptr ? Bm_bitmaps[handle].filename_ptr : "-", frame % (int)num_frames, num_frames, (void*)Bm_bitmaps[handle].current_peg_entry);
+                }
+                return nullptr;
+            }
+            handle = animated;
         }
     }
     return &Bm_bitmaps[handle];
