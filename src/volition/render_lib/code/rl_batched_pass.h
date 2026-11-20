@@ -67,7 +67,9 @@ protected:
     rl_batched_decal* m_decals; // 0x20
     volatile unsigned int m_num_batched_materials; // 0x24
     rl_batched_material_info* m_batched_materials; // 0x28
-    rl_lf_static_hash<uint64_t,rl_batched_material_info,&rl_hash_uint64,2048>* m_batched_material_hash; // 0x2C
+    // rfg.exe: rl_lf_static_hash<uint64_t, rl_batched_material_info, &rl_hash_uint64, 2048>*; scaling (OpenRFG64-memtest):
+    // its base, the table being larger (rl_batched_pass.cpp)
+    rl_lf_hash<uint64_t,rl_batched_material_info,&rl_hash_uint64>* m_batched_material_hash; // 0x2C
     volatile unsigned int m_num_render_groups; // 0x30
     rl_render_group* m_render_groups; // 0x34
 };

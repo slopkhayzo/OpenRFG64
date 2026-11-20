@@ -667,6 +667,55 @@ static bool shouldPrimUseGPU(const stream2_prim* pPrim)
     return use_gpu;
 }
 
+// scaling (OpenRFG64-memtest, new): calc_container_requirements in 64 bits.
+static unsigned long long align_up_wide(unsigned long long value, int align)
+{
+    const unsigned long long a = align > 0 ? (unsigned long long)align : 1;
+    return (value + a - 1) / a * a;
+}
+
+void stream2_container::calc_container_requirements_wide(unsigned long long& cpu_bytes_needed, int& cpu_align_needed, unsigned long long& gpu_bytes_needed, int& gpu_align_needed) const
+{
+    cpu_align_needed = 1;
+    cpu_bytes_needed = 0;
+    gpu_align_needed = 1;
+    gpu_bytes_needed = 0;
+    for (int i = 0; i < num_entries; i++)
+    {
+        if (!entries[i].enable)
+        {
+            continue;
+        }
+        const stream2_prim* const prim = entries[i].prim;
+        const stream2_prim_def* const pdef = prim->pdef;
+        if (cpu_align_needed < pdef->cpu_align)
+        {
+            cpu_align_needed = pdef->cpu_align;
+        }
+        cpu_bytes_needed = align_up_wide(cpu_bytes_needed, pdef->cpu_align) + (unsigned int)prim->cpu_size;
+        const bool use_gpu = pdef->flags.alloc_split && (prim->flags & 0x4) != 0;
+        if (pdef->prim_type == 2 || !use_gpu)
+        {
+            if (prim->gpu_size > 0)
+            {
+                if (cpu_align_needed < pdef->gpu_align)
+                {
+                    cpu_align_needed = pdef->gpu_align;
+                }
+                cpu_bytes_needed = align_up_wide(cpu_bytes_needed, pdef->gpu_align) + (unsigned int)prim->gpu_size;
+            }
+        }
+        else
+        {
+            if (gpu_align_needed < pdef->gpu_align)
+            {
+                gpu_align_needed = pdef->gpu_align;
+            }
+            gpu_bytes_needed = align_up_wide(gpu_bytes_needed, pdef->gpu_align) + (unsigned int)prim->gpu_size;
+        }
+    }
+}
+
 // 0x004AD490 (:850)
 void stream2_container::calc_container_requirements(int& cpu_bytes_needed, int& cpu_align_needed, int& gpu_bytes_needed, int& gpu_align_needed) const
 {
@@ -826,6 +875,7 @@ bool stream2_container::alloc()
     int gpu_align = 1;
     unsigned char* audio_data = nullptr;
     const bool vehicle = strcmp(cdef->name, "Vehicle") == 0;
+    bool allocated_wide = false; // scaling (OpenRFG64-memtest): a container past 2 GB, below
     if (vehicle)
     {
         int audio_bytes = 0;
@@ -843,11 +893,36 @@ bool stream2_container::alloc()
     }
     else
     {
-        calc_container_requirements(cpu_bytes, cpu_align, gpu_bytes, gpu_align);
+        // scaling (OpenRFG64-memtest): in 64 bits; a container past 2 GB (a big map's ns_base, level memory) takes the
+        // level allocator's unsigned path, the rest the game's.
+        unsigned long long cpu_wide = 0;
+        unsigned long long gpu_wide = 0;
+        calc_container_requirements_wide(cpu_wide, cpu_align, gpu_wide, gpu_align);
+        cpu_bytes = cpu_wide > 0x7FFFFFFFull ? -1 : (int)cpu_wide;
+        gpu_bytes = gpu_wide > 0x7FFFFFFFull ? -1 : (int)gpu_wide;
+        if (cpu_bytes < 0 || gpu_bytes < 0)
+        {
+            stream2_dynamic_allocator* const level = dynamic_cast<stream2_dynamic_allocator*>(cdef->allocator);
+            if (level == nullptr || gpu_bytes != 0 || cpu_wide > 0xFFFFFFFFull)
+            {
+                keen::debug::nativePrintArgs("[Stream2] <alloc> container %s: %llu + %llu bytes, past what its allocator takes\n", name, cpu_wide, gpu_wide);
+                return false;
+            }
+            level->alloc_wide((unsigned int)cpu_wide, cpu_align, cpu_allocated, name);
+            if (cpu_allocated == nullptr)
+            {
+                return false;
+            }
+            gpu_bytes = 0;
+            allocated_wide = true;
+        }
     }
 
     stream2_allocator* const allocator = cdef->allocator;
-    allocator->alloc(cpu_bytes, cpu_align, cpu_allocated, 0, gpu_align, gpu_allocated, name);
+    if (!allocated_wide)
+    {
+        allocator->alloc(cpu_bytes, cpu_align, cpu_allocated, 0, gpu_align, gpu_allocated, name);
+    }
     int gpu_needed = 0;
     if (gpu_bytes != 0)
     {
@@ -866,8 +941,8 @@ bool stream2_container::alloc()
         return false;
     }
 
-    int cpu_offset = 0;
-    int gpu_offset = 0;
+    unsigned int cpu_offset = 0; // scaling: past 2 GB (an int in the game)
+    unsigned int gpu_offset = 0;
     int audio_offset = 0;
     for (int i = 0; i < num_entries; i++)
     {
@@ -888,14 +963,14 @@ bool stream2_container::alloc()
             return false;
         }
         const stream2_prim_def* const pdef = prim->pdef;
-        cpu_offset = align_up(cpu_offset, pdef->cpu_align);
+        cpu_offset = (unsigned int)align_up_wide(cpu_offset, pdef->cpu_align);
         prim->cpu_data = cpu_allocated + cpu_offset;
-        cpu_offset += prim->cpu_size;
+        cpu_offset += (unsigned int)prim->cpu_size;
         if (shouldPrimUseGPU(prim))
         {
-            gpu_offset = align_up(gpu_offset, pdef->gpu_align);
+            gpu_offset = (unsigned int)align_up_wide(gpu_offset, pdef->gpu_align);
             prim->gpu_data = gpu_allocated + gpu_offset;
-            gpu_offset += prim->gpu_size;
+            gpu_offset += (unsigned int)prim->gpu_size;
         }
         else if (prim->gpu_size < 1)
         {
@@ -903,9 +978,9 @@ bool stream2_container::alloc()
         }
         else
         {
-            cpu_offset = align_up(cpu_offset, pdef->gpu_align);
+            cpu_offset = (unsigned int)align_up_wide(cpu_offset, pdef->gpu_align);
             prim->gpu_data = cpu_allocated + cpu_offset;
-            cpu_offset += prim->gpu_size;
+            cpu_offset += (unsigned int)prim->gpu_size;
         }
     }
     return true;

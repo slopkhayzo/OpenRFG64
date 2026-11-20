@@ -69,6 +69,8 @@ public:
     virtual void max_alloc(int& cpu_max, int& gpu_max); // vtbl+0x0C 0x004AA020 (:58)
     virtual int max_alloc(); // vtbl+0x10 0x004AA050 (:69)
     virtual void alloc(int cpu_bytes, int cpu_align, unsigned char*& cpu_alloc, int gpu_bytes, int gpu_align, unsigned char*& gpu_alloc, const char* debug_name); // vtbl+0x14 0x004AA060 (:74)
+    // scaling (OpenRFG64-memtest, new): one cpu block of up to 4 GB (a container past 2 GB in level memory)
+    void alloc_wide(unsigned int cpu_bytes, int cpu_align, unsigned char*& cpu_alloc, const char* debug_name);
     virtual unsigned char* alloc(int bytes, int align, const char* debug_name); // vtbl+0x18 0x004AA110 (:168)
     virtual void free(unsigned char* data); // vtbl+0x20 0x004AA160 (:185)
     virtual void free(unsigned char* cpu_data, unsigned char* gpu_data); // vtbl+0x1C 0x004AA130 (:173)

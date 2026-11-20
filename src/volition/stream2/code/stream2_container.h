@@ -111,6 +111,8 @@ public:
     bool load(bool fromLoadThread); // 0x004ADC70 (:1211)
     void unload(); // 0x004ADD20 (:1277)
     void calc_container_requirements(int& cpu_bytes_needed, int& cpu_align_needed, int& gpu_bytes_needed, int& gpu_align_needed, int& audio_bytes_needed, int& audio_align_needed) const; // 0x004AD5F0 (:893)
+    // scaling (OpenRFG64-memtest, new): the same, in 64 bits (a container past 2 GB: a big map's ns_base)
+    void calc_container_requirements_wide(unsigned long long& cpu_bytes_needed, int& cpu_align_needed, unsigned long long& gpu_bytes_needed, int& gpu_align_needed) const;
     void calc_container_requirements(int& cpu_bytes_needed, int& cpu_align_needed, int& gpu_bytes_needed, int& gpu_align_needed) const; // 0x004AD490 (:850)
     void get_stream_data_filename(vlib_platform plat, char* filename) const; // 0x004AA6B0 (:1413)
     static bool load_container(cfile* asm_file, mempool_base* pool, bool report_errors, bool is_temp, bool patch_data); // 0x004B1180 (:1749)

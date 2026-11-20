@@ -70,7 +70,10 @@ static const char* Chunk_platform_ext[8] = {".cchk_pc", ".cchk_pc", ".cchk_pc", 
 static unsigned short C_chunk_base_uid; // 0x02CEC148
 static bool Chunk_system_init; // 0x02CEC14A
 static object_pool<c_chunk_base,352,1> Chunk_base; // 0x02FA0560
-static str_data_hash_table<c_chunk_base*,352,32,unsigned short> Chunk_base_hash; // 0x02FD9BE0
+// scaling (OpenRFG64-memtest): 16,384 names instead of 352 (a map of ten avenues loads 480 building types and more);
+// the pool (Chunk_base, 352) grows with grow-on-demand memory (scaling.cpp's allow-list). A chunk's uid keeps its
+// pool index in 16 bits. Names stay under 32 characters.
+static str_data_hash_table<c_chunk_base*,16384,32,unsigned short> Chunk_base_hash; // 0x02FD9BE0 (352 names)
 
 // 0x0091FAC0 (compiler generated)
 c_chunk_base::c_chunk_base()

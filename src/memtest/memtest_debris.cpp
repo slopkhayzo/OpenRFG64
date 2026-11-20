@@ -38,6 +38,7 @@
 #include "volition/rfg/code/objects/humans/player.h"
 #include "volition/rfg/code/objects/movers/general_mover.h"
 #include "volition/rfg/code/objects/movers/object_mover.h"
+#include "volition/render_lib/code/rl_compiled_render_group.h"
 #include "volition/render_lib/code/rl_destroyable_model_instance.h"
 #include "volition/render_lib/code/rl_factory_rtti.h"
 #include "volition/render_lib/code/rl_fp_kdtree.h"
@@ -614,6 +615,9 @@ void memtest_render_limits()
         rl_factory_set_growth(rl_fp_kdtree::ms_class_factory_info, 2 * Render_instances_ceiling, &render_class_grew);
         memtest_event("scaling: destroyable render instances grow from %d when they run out, up to %d",
                       rl_destroyable_model_instance::get_objects_max(), Render_instances_ceiling);
+        // The batched pass's compiled groups (1,024): one for each group of a material that combines draws, and a
+        // pass holds up to 16,384 groups on big maps (rl_batched_pass.cpp).
+        rl_factory_set_growth(rl_compiled_render_group::ms_class_factory_info, 65536, &render_class_grew);
     }
 }
 

@@ -39,8 +39,11 @@ RL_FACTORY_CLASS_IMPLEMENTATION(rl_batched_pass, 0x11235813, 2)
 static const unsigned int BATCHED_INSTANCES_MAX = 0x6000;
 static const unsigned int UNBATCHED_RENDERABLES_MAX = 0x1000;
 static const unsigned int BATCHED_DECALS_MAX = 0x200;
-static const unsigned int BATCHED_MATERIALS_MAX = 0x400;
-static const unsigned int RENDER_GROUPS_MAX = 0x1000;
+// scaling (OpenRFG64-memtest): 16,384 (material, mesh, visibility) infos a frame and their render groups (two slots
+// each, see finalize_construction), from rfg.exe's 0x400 and 0x1000: one avenue of 48 different buildings already
+// showed more than 1,024 at once, and the overflow crashed the frame (partition_batched_instances).
+static const unsigned int BATCHED_MATERIALS_MAX = 0x4000;
+static const unsigned int RENDER_GROUPS_MAX = 2 * BATCHED_MATERIALS_MAX;
 
 // memtest (rfgphys's BatchedCap and UnbatchedCap, in the source): the two lists are as long as
 // memtest_batched_cap / memtest_unbatched_cap (the game's 0x6000 and 0x1000 when not set), made by the first pass.
@@ -60,7 +63,7 @@ static rl_batched_instance* Batched_instance_buffer; // 0x01B09A40 (an array of 
 static rl_renderable_instance** Unbatched_renderable_buffer; // 0x01B6EBF8 (an array of UNBATCHED_RENDERABLES_MAX)
 static rl_batched_decal Batched_decal_buffer[BATCHED_DECALS_MAX]; // 0x01B6AAF8
 static rl_batched_material_info Batched_material_info_buffer[BATCHED_MATERIALS_MAX]; // 0x01B76C08
-static rl_lf_static_hash<uint64_t, rl_batched_material_info, &rl_hash_uint64, 2048> Batched_material_hash; // 0x0150A720
+static rl_lf_static_hash<uint64_t, rl_batched_material_info, &rl_hash_uint64, 2 * BATCHED_MATERIALS_MAX> Batched_material_hash; // 0x0150A720 (2048)
 static rl_render_group Render_group_buffer[RENDER_GROUPS_MAX]; // 0x01C74A10
 static int Batched_instance_watermark = 0; // 0x01B7BC3C
 static int Unbatched_instance_watermark = 0; // 0x01B7BC40
@@ -68,11 +71,20 @@ static int Batched_decal_watermark = 0; // 0x01B7BC44
 static int Batched_material_watermark = 0; // 0x01B7BC48
 static int Batched_group_watermark = 0; // 0x01B7BC4C
 
-// The material hash key: visibility flags in the high half, mesh uid << 16 | material handle in the low half.
+// The material hash key. rfg.exe: visibility flags in the high half, mesh uid << 16 | material handle in the low half,
+// so meshes whose uids are 65,536 apart (a counter that only grows: streaming and the piles' compiled meshes pass it)
+// shared an info, and one was drawn with the other's geometry. scaling (OpenRFG64-memtest): the whole uid, handle and
+// flags (79 bits) mixed into the 64-bit key; two keys meet with a chance of about 2^-64.
+static uint64_t mix64(uint64_t x)
+{
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
 static uint64_t material_key(unsigned int mat_handle, const rl_mesh* mesh, unsigned int vis_flags)
 {
-    const unsigned int low = (unsigned int)(unsigned short)mesh->get_uid() << 16 | (mat_handle & 0xFFFF);
-    return (uint64_t)vis_flags << 32 | low;
+    return mix64((uint64_t)mesh->get_uid() << 32 | mat_handle) ^ mix64(0x5D1F00000000ull | vis_flags);
 }
 
 // The renderer state after a batched draw: identity world transform (rl_renderer::set_world_transform, inlined).
@@ -144,6 +156,13 @@ bool sort_material_infos(const rl_batched_material_info& lhs, const rl_batched_m
 // materials that no longer fit are dropped (metrics warning 4). The hash is rebuilt over the sorted infos.
 void rl_batched_pass::partition_batched_instances()
 {
+    // OpenRFG64-memtest fix: add_material_stats counts past the buffer when the infos are full (rfg.exe clamps only in
+    // finalize_construction, after this): the sort and the loop went past the buffer's end, and a garbage info's mesh
+    // crashed the render thread (rl_mesh::get_uid, one avenue of 48 different buildings under the demolition).
+    if (m_num_batched_materials > BATCHED_MATERIALS_MAX)
+    {
+        m_num_batched_materials = BATCHED_MATERIALS_MAX;
+    }
     std::sort(m_batched_materials, m_batched_materials + m_num_batched_materials, sort_material_infos);
     m_batched_material_hash->clear();
     unsigned int first_instance = 0;
@@ -246,6 +265,15 @@ void rl_batched_pass::finalize_construction(rl_renderer& renderer)
         if (rl_material_library_can_combine_drawcalls(group.material_handle))
         {
             group.compiled_group = rl_compiled_render_group::create();
+            if (group.compiled_group == nullptr)
+            {
+                // OpenRFG64-memtest fix: the compiled groups' pool (1,024 in rfg.exe, growing in memtest:
+                // memtest_render_limits) ran out; render() draws a combining material's groups compiled only, so this
+                // one is left out of this frame (metrics warning 8, as for groups past the buffer) instead of a crash.
+                group.visibility_flags = 0;
+                rl_render_lib::get_instance()->m_metrics_p->set_warning_flag(8);
+                continue;
+            }
             group.compiled_group->build(renderer, &group, m_transform_stream);
         }
         else

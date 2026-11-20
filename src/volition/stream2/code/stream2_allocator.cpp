@@ -125,23 +125,30 @@ bool stream2_dynamic_allocator::can_alloc(int bytes, int align)
     return cpu_memmgr->can_alloc((unsigned int)bytes, (unsigned int)align);
 }
 
+// scaling (OpenRFG64-memtest): the level's memory manager may hold more than 2 GB (level memory, rfg.cpp): its sizes
+// are clamped to an int instead of cast (a cast made 2 GB free a negative number, and the streamer refused every load).
+static int clamp_int(unsigned int v)
+{
+    return v > 0x7FFFFFFFu ? 0x7FFFFFFF : (int)v;
+}
+
 // 0x004AA020 (:58)
 void stream2_dynamic_allocator::max_alloc(int& cpu_max, int& gpu_max)
 {
-    cpu_max = (int)cpu_memmgr->largest_allocation_possible();
-    gpu_max = (int)cpu_memmgr->largest_allocation_possible();
+    cpu_max = clamp_int(cpu_memmgr->largest_allocation_possible());
+    gpu_max = clamp_int(cpu_memmgr->largest_allocation_possible());
 }
 
 // 0x004AA050 (:69)
 int stream2_dynamic_allocator::max_alloc()
 {
-    return (int)cpu_memmgr->largest_allocation_possible();
+    return clamp_int(cpu_memmgr->largest_allocation_possible());
 }
 
 // 0x004AA060 (:74)
 void stream2_dynamic_allocator::alloc(int cpu_bytes, int cpu_align, unsigned char*& cpu_alloc, int gpu_bytes, int gpu_align, unsigned char*& gpu_alloc, const char* debug_name)
 {
-    if (cpu_bytes > (int)cpu_memmgr->space_free() || cpu_bytes > (int)cpu_memmgr->largest_allocation_possible())
+    if (cpu_bytes > clamp_int(cpu_memmgr->space_free()) || cpu_bytes > clamp_int(cpu_memmgr->largest_allocation_possible()))
     {
         frag_fail = true;
         return;
@@ -157,7 +164,7 @@ void stream2_dynamic_allocator::alloc(int cpu_bytes, int cpu_align, unsigned cha
         gpu_alloc = nullptr;
         return;
     }
-    if (gpu_bytes <= (int)cpu_memmgr->space_free() && gpu_bytes <= (int)cpu_memmgr->largest_allocation_possible())
+    if (gpu_bytes <= clamp_int(cpu_memmgr->space_free()) && gpu_bytes <= clamp_int(cpu_memmgr->largest_allocation_possible()))
     {
         gpu_alloc = (unsigned char*)cpu_memmgr->alloc((unsigned int)gpu_bytes, debug_name, (unsigned int)gpu_align);
         if (gpu_alloc != nullptr)
@@ -167,6 +174,23 @@ void stream2_dynamic_allocator::alloc(int cpu_bytes, int cpu_align, unsigned cha
         }
     }
     frag_fail = true;
+}
+
+// scaling (OpenRFG64-memtest, new): stream2_container::allocate's path for a container past 2 GB: its cpu block in
+// level memory, sized in unsigned 32 bits (split_memmgr's).
+void stream2_dynamic_allocator::alloc_wide(unsigned int cpu_bytes, int cpu_align, unsigned char*& cpu_alloc, const char* debug_name)
+{
+    cpu_alloc = nullptr;
+    if (cpu_bytes > cpu_memmgr->space_free() || cpu_bytes > cpu_memmgr->largest_allocation_possible())
+    {
+        frag_fail = true;
+        return;
+    }
+    cpu_alloc = (unsigned char*)cpu_memmgr->alloc(cpu_bytes, debug_name, (unsigned int)cpu_align);
+    if (cpu_alloc == nullptr)
+    {
+        frag_fail = true;
+    }
 }
 
 // 0x004AA110 (:168)

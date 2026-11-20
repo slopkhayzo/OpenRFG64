@@ -50,7 +50,7 @@ namespace keen
             }
             if (scaling_enabled())
             {
-                blocks[6].size = 0x7FFF0000u;
+                blocks[6].size = 0xDFFF0000u; // 3.5 GB: the streamer clamps its sizes, a container may pass 2 GB (stream2_container.cpp)
                 blocks[2].size -= 0x1C000000u;
             }
             made = true;

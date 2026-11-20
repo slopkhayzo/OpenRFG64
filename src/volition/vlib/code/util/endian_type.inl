@@ -11,8 +11,8 @@
 namespace et_far
 {
 static const int Base = 0x7F000000;
-static const unsigned int Max_entries = 0x100000;
-static const unsigned int Hash_size = 0x200000;
+static const unsigned int Max_entries = 0x400000; // OpenRFG64-memtest: 4 million (1 in OpenRFG64): big maps
+static const unsigned int Hash_size = 0x800000;
 struct tables
 {
     void* targets[Max_entries];

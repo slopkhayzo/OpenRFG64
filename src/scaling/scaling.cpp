@@ -331,7 +331,11 @@ namespace
         { "rl_deferred_operation", 1u << 20 },
         { "rl_decal_deferred_info", 1u << 20 },
         { "destruction_event", 65535 },        // undergrowth destruction (8 in the game)
+        { "c_chunk_base", 16384 },             // the loaded chunks (352): their name table holds 16,384
         { "mover_fader", 65535 },              // mover_fader::handle keeps the index in its upper 16 bits
+        { "matlib_entry", 1u << 20 },          // the material library's registered materials (2,560): each chunk type
+                                               // registers its own; ten avenues of 480 types filled them at load, and a
+                                               // material left out did not resolve (the terrain's low LOD crashed)
     };
 
     volatile LONG Static_init_done;
