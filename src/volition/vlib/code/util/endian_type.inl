@@ -11,8 +11,11 @@
 namespace et_far
 {
 static const int Base = 0x7F000000;
-static const unsigned int Max_entries = 0x400000; // OpenRFG64-memtest: 4 million (1 in OpenRFG64): big maps
-static const unsigned int Hash_size = 0x800000;
+// OpenRFG64-memtest: 16,777,215 (1 million in OpenRFG64), as many as the offset's encoding holds (Base + index stays
+// below 2^31). None is ever freed: the ten avenues of tall buildings take 4.2 million a load, so 4 million would not
+// hold one of them, and this holds three.
+static const unsigned int Max_entries = 0xFFFFFF;
+static const unsigned int Hash_size = 0x2000000;
 struct tables
 {
     void* targets[Max_entries];
