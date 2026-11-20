@@ -48,11 +48,17 @@ void rl_particle_renderer::filler_ribbon_parametric(rl_renderable_particles_inst
 {
     const pool_list<rl_particle_parametric>& particles = instance_p->get_particle_parametric_list();
     const int num_particles = particles.size();
-    if (num_particles < 2) { return; } // OpenRFG: index 0 pairs with index 1; a 1-particle ribbon crashed here
+    // OpenRFG: a lone particle pairs with itself (rfg.exe reads the spare slot vfxlib allocates past the end), and its
+    // two vertices are still written. Returning without them left num_prims at 0, which draw_particles takes as "the
+    // whole shared geometry": 2000 indices over the 1000 ribbon indices, so up to 1000 stale vertices of the immediate
+    // buffer were drawn with the ribbon's material, as triangles across the screen. A ribbon is down to one particle
+    // whenever its particles die at different times (ribbons drop dead particles out of order; a tracer's pair can
+    // differ in lifetime) and when a trail starts or dies out. Two vertices make no triangle, so a lone particle draws
+    // nothing, as in rfg.exe.
     for (int index = (num_particles > 499 ? 499 : num_particles) - 1; -1 < index; index--) // OpenRFG: the vertex buffer only holds 499 particles
     {
         const rl_particle_parametric& particle = particles[index];
-        const rl_particle_parametric& other = index == 0 ? particles[1] : particles[index - 1];
+        const rl_particle_parametric& other = index != 0 ? particles[index - 1] : particles[num_particles > 1 ? 1 : 0];
         ribbon_parametric_vertex vertex;
         vertex.pos_1 = vector4(particle.position.x, particle.position.y, particle.position.z, particle.lifetime);
         vertex.pos_2 = vector4(other.position.x, other.position.y, other.position.z, other.lifetime);
