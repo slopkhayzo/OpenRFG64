@@ -151,7 +151,7 @@ namespace keen
         hInstance = nullptr;
         nShowCmd = SW_SHOW;
         // Magic number: 64 KB immediate geometry buffer.
-        immediateGeometryBufferSize = 0x10000;
+        immediateGeometryBufferSize = 0x100000; // OpenRFG: 1 MB (was 64 KB)
         supportScaling = true;
         createDefaultSwapChain = true;
         defaultDepthBufferFormat = PixelFormat_Default_Depth;

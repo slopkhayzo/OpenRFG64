@@ -28,6 +28,7 @@
 #ifndef OPENRFG_AUDIO
 
 #include "volition/rfg/code/geom/vanim.h"
+#include <cstddef>
 
 #include "keen/base/trace.hpp"
 #include "volition/anim_lib/code/anim_lib.h"
@@ -95,7 +96,8 @@ static const unsigned int VA_IGNORE_Y = 0x20000;
 
 static unsigned int& va_bits(v_anim& va)
 {
-    return *(unsigned int*)((char*)&va + 0x11C);
+    // The bit flags follow prop_triggers_elapsed, 4-byte aligned (a fixed 0x11C is wrong in 64-bit).
+    return *(unsigned int*)((char*)&va + ((offsetof(v_anim, prop_triggers_elapsed) + 4) & ~(size_t)3));
 }
 
 // ---- globals
@@ -3603,6 +3605,7 @@ void vanim_clear_states(v_animate* vp)
 #else // OPENRFG_AUDIO
 
 #include "volition/rfg/code/geom/vanim.h"
+#include <cstddef>
 
 #include "volition/anim_lib/code/anim_lib.h"
 #include "volition/audio_lib/code/audiolib_enums.h"

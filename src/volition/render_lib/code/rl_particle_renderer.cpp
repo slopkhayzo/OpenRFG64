@@ -5,6 +5,9 @@
 // particle and corona drawing through keen's immediate vertex buffer. The fillers are in rl_particle_filler_*.cpp, the
 // deferred passes in rl_particle_renderer_deferred.cpp.
 
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGPART
+extern "C" __declspec(dllimport) short __stdcall GetAsyncKeyState(int); // DBGPART2
+static bool dbg_part_key(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; } // DBGPART2
 #include "volition/render_lib/code/rl_particle_renderer.h"
 
 #include "volition/render_lib/code/rl_batched_pass.h"
@@ -130,11 +133,6 @@ rl_particle_renderer::~rl_particle_renderer()
 void rl_particle_renderer::initialize(const int width, const int height, const rl_level_of_detail& lod)
 {
     m_level_of_detail = lod.m_particle_lod;
-    {   // DBGPART: expected bb=30 rad=34 drop=38 rpar=50 rib=44 ori=38 cor=b0 iter=80 par=40 tail=28
-        extern void openrfg_log(const char*); char b[300];
-        sprintf(b, "DBGPART sizes bb=%x rad=%x drop=%x rpar=%x rib=%x ori=%x cor=%x iter=%x par=%x tail=%x", (unsigned)sizeof(billboard_vertex), (unsigned)sizeof(radial_vertex), (unsigned)sizeof(drop_vertex), (unsigned)sizeof(ribbon_parametric_vertex), (unsigned)sizeof(ribbon_vertex), (unsigned)sizeof(oriented_vertex), (unsigned)sizeof(corona_vertex), (unsigned)sizeof(rl_particle_iterative), (unsigned)sizeof(rl_particle_parametric), (unsigned)sizeof(rl_particle_base::tail_data));
-        openrfg_log(b);
-    }
     // Magic numbers: 64 bytes per parametric particle, 128 per iterative particle, 40 per tail (computed once).
 #ifdef OPENRFG_X64
     // OpenRFG: 4x bigger particle pools; when a pool runs dry the whole effect is dropped for the frame (flicker in firefights).
@@ -748,13 +746,21 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
 {
     rl_renderable_particles* renderable_p = instance_p->get_renderable_particles();
     if (renderable_p == nullptr || renderable_p->get_material() == nullptr || renderable_p->get_color_correction_matrix() == nullptr)
-    { static int dbgn=0; if (dbgn<20) { dbgn++; extern void openrfg_log(const char*); char b[200]; snprintf(b,sizeof(b),"DBGPRNULL inst=%p rend=%p mat=%p cc=%p",(void*)instance_p,(void*)renderable_p,renderable_p?(void*)renderable_p->get_material():nullptr,renderable_p?(void*)renderable_p->get_color_correction_matrix():nullptr); openrfg_log(b);} return; }
+        return;
     const bool is_iterative = renderable_p->get_is_iterative();
     int count = is_iterative ? instance_p->get_particle_iterative_list().size() : instance_p->get_particle_parametric_list().size();
     if (count == 0)
     {
         return;
     }
+#if 0 // DBGPART2 disabled (numpad hide keys)
+    { // DBGPART2: hold a numpad key to hide one kind of particle (find which kind streaks)
+        const rl_particle_base::render_type dbg_type = renderable_p->get_particle_type();
+        const bool dbg_iter = is_iterative;
+        if ((dbg_type == rl_particle_base::RENDER_TYPE_ORIENTED && dbg_part_key(0x61)) || (!dbg_iter && dbg_part_key(0x62)) || (dbg_iter && dbg_part_key(0x63)) || (dbg_type == rl_particle_base::RENDER_TYPE_BILLBOARD && dbg_part_key(0x64)) || (dbg_type == rl_particle_base::RENDER_TYPE_RIBBON && dbg_part_key(0x65)) || (dbg_part_key(0x66) && instance_p->get_local_emission_position().x == instance_p->get_local_emission_position().x && renderable_p->get_local_space_emission()))
+            return;
+    }
+#endif // DBGPART2 disabled
     const bool has_alternate_view = instance_p->get_has_alternate_view();
     if (!is_iterative)
     {
@@ -792,7 +798,6 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
     {
         count = 499;
     }
-    { static int dbgpr=0; static void* seen[400]; static int nseen=0; bool dbgnew=false; { void* mm=(void*)renderable_p->get_material(); bool f=false; for(int i=0;i<nseen;i++) if(seen[i]==mm){f=true;break;} if(!f && nseen<400){seen[nseen++]=mm; dbgnew=true;} } if (dbgpr<400 && count>0 && (dbgnew || count>=8)) { dbgpr++; extern void openrfg_log(const char*); char b[300]; rl_particle_material_data* m=renderable_p->get_material(); snprintf(b,sizeof(b),"DBGPR n=%d iter=%d type=%d mat=%p flags=%x vsc=%d psc=%d tex0=%d/%d op=%f lg=%d sz_mat=%x sz_sc=%x",count,(int)is_iterative,(int)render_type,(void*)m,m?m->flags:0,m?(int)m->vs_const_info.num_const_refs:-1,m?(int)m->ps_const_info.num_const_refs:-1,m?(int)m->textures.to_pointer()[0].tex_stage:-9,m?(int)m->textures.to_pointer()[0].tex_ref:-9,(double)opacity,0,(unsigned)sizeof(rl_particle_material_data),(unsigned)sizeof(rl_particle_shader_const)); openrfg_log(b); if(!is_iterative && count>=8){ static int d2=0; if(d2<40){d2++; const float* c=(const float*)instance_p->get_parametric_constant_data(); const rl_particle_parametric& p=instance_p->get_particle_parametric_list()[0]; snprintf(b,sizeof(b),"DBGPR2 c=%p c0-7=%g %g %g %g %g %g %g %g c52=%g c53=%g p.pos=%g %g %g tc=%g life=%g rot=%g",(const void*)c,c?c[0]:0,c?c[1]:0,c?c[2]:0,c?c[3]:0,c?c[4]:0,c?c[5]:0,c?c[6]:0,c?c[7]:0,c?c[52]:0,c?c[53]:0,(double)p.position.x,(double)p.position.y,(double)p.position.z,(double)p.time_created,(double)p.lifetime,(double)p.rotation_angle); openrfg_log(b);} } } }
     const unsigned int stride = is_iterative ? m_iterative_vertex_info[render_type].stride : m_parametric_vertex_info[render_type].stride;
     unsigned int num_vertices;
     if (render_type == rl_particle_base::RENDER_TYPE_DROP)
@@ -918,7 +923,6 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
     }
     if (!renderer.set_active_shader(material_p->effect_ref, rl_shader_technique_user, m_particle_shader_techniques[render_type].m_technique_refs[technique].get_ref()))
     {
-        { static int dbgsf=0; if(dbgsf<30){dbgsf++; extern void openrfg_log(const char*); char b2[200]; snprintf(b2,sizeof(b2),"DBGSHFAIL type=%d tech=%d effect=%d",(int)render_type,(int)technique,(int)material_p->effect_ref); openrfg_log(b2);} }
         return;
     }
     unsigned int num_verts = 0;
@@ -950,6 +954,56 @@ void rl_particle_renderer::render(rl_renderer& renderer, const rl_camera& camera
             break;
         }
         draw_particles(renderer, is_iterative, render_type, num_verts, num_prims);
+#if 0 // DBGPART disabled (debug trace)
+        { // DBGPART: sample of what is drawn (only with --game-trace)
+            static int calls_ = 0; static int logged_ = 0;
+            static int pr_ = 0; static int prc_ = 0;
+            if (!is_iterative && render_type == rl_particle_base::RENDER_TYPE_RIBBON && pr_ < 100000000 && (prc_++ % 60) == 0)
+            {
+                const pool_list<rl_particle_parametric>& pl = instance_p->get_particle_parametric_list();
+                const int n = pl.size();
+                float maxd = 0.0f; int maxi = -1;
+                for (int k = 1; k < n; k++)
+                {
+                    const vector d(pl[k].position.x - pl[k - 1].position.x, pl[k].position.y - pl[k - 1].position.y, pl[k].position.z - pl[k - 1].position.z);
+                    const float dd = d.x * d.x + d.y * d.y + d.z * d.z;
+                    if (dd > maxd) { maxd = dd; maxi = k; }
+                }
+                pr_++;
+                GAME_TRACE("part", "PRIB n=%d numv=%u prims=%u maxgap2=%.2f at=%d elapsed=%.3f local=%d tc0=%.3f life0=%.3f emit0=%d tcN=%.3f lifeN=%.3f emitN=%d", n, num_verts, num_prims, maxd, maxi, instance_p->get_current_elapsed_time(), (int)instance_p->get_is_local_space(), n > 0 ? pl[0].time_created : 0.0f, n > 0 ? pl[0].lifetime : 0.0f, n > 0 ? pl[0].emit_number : 0, n > 0 ? pl[n - 1].time_created : 0.0f, n > 0 ? pl[n - 1].lifetime : 0.0f, n > 0 ? pl[n - 1].emit_number : 0);
+                if (n >= 2) GAME_TRACE("part", "PRIP p0=%.1f,%.1f,%.1f p1=%.1f,%.1f,%.1f rnd0=%.2f,%.2f,%.2f rnd1=%.2f,%.2f,%.2f", pl[0].position.x, pl[0].position.y, pl[0].position.z, pl[1].position.x, pl[1].position.y, pl[1].position.z, pl[0].random.x, pl[0].random.y, pl[0].random.z, pl[1].random.x, pl[1].random.y, pl[1].random.z); // DBGPART
+            }
+            static int anom_ = 0;
+            if (is_iterative && anom_ < 400)
+            {
+                for (int k = 0; k < instance_p->get_particle_iterative_list().size(); k++)
+                {
+                    const rl_particle_iterative& q = instance_p->get_particle_iterative_list()[k];
+                    const float sp2 = q.velocity.x * q.velocity.x + q.velocity.y * q.velocity.y + q.velocity.z * q.velocity.z;
+                    const bool bad = !(sp2 < 2500.0f) || !(q.current_size < 60.0f) || !(q.current_length < 60.0f) || !(q.position.x > -1e5f && q.position.x < 1e5f && q.position.y > -1e5f && q.position.y < 1e5f && q.position.z > -1e5f && q.position.z < 1e5f) || q.get_particle_tail_list_size() > 64;
+                    if (bad)
+                    {
+                        anom_++;
+                        GAME_TRACE("part", "ANOM type=%d k=%d/%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f size=%.3f len=%.3f ntail=%d stride=%u", (int)render_type, k, (int)instance_p->get_particle_iterative_list().size(), q.position.x, q.position.y, q.position.z, q.velocity.x, q.velocity.y, q.velocity.z, q.current_size, q.current_length, q.get_particle_tail_list_size(), stride);
+                        break;
+                    }
+                }
+            }
+            if ((calls_++ % 60) == 0 && logged_ < 2000)
+            {
+                logged_++;
+                GAME_TRACE("part", "type=%d iter=%d count=%d numv=%u verts=%u prims=%u stride=%u soft=%d tails=%d", (int)render_type, (int)is_iterative, count, num_vertices, num_verts, num_prims, stride, (int)((flags & rl_particle_material_data::MATERIAL_FLAG_SOFT_RENDER) != 0), is_iterative ? instance_p->get_tail_spawn_count() : 0);
+                if (is_iterative)
+                {
+                    for (int k = 0; k < 3 && k < instance_p->get_particle_iterative_list().size(); k++)
+                    {
+                        const rl_particle_iterative& q = instance_p->get_particle_iterative_list()[k];
+                        GAME_TRACE("part", "  p%d pos=%.2f,%.2f,%.2f vel=%.2f,%.2f,%.2f size=%.3f len=%.3f rot=%.3f col=%.2f,%.2f,%.2f,%.2f ntail=%d", k, q.position.x, q.position.y, q.position.z, q.velocity.x, q.velocity.y, q.velocity.z, q.current_size, q.current_length, q.rotation_angle, q.current_color.red, q.current_color.green, q.current_color.blue, q.current_color.alpha, q.get_particle_tail_list_size());
+                    }
+                }
+            }
+        }
+#endif // DBGPART disabled
     }
     instance_p->get_particle_parametric_list().clear();
     instance_p->get_particle_iterative_list().clear();

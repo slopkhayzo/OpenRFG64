@@ -327,7 +327,6 @@ void key_poll()
         const bool down = keyboard.keys[i];
         if (down != Key_states[i].down)
         {
-            { static int n = 0; if (n < 10) { n++; openrfg_log("DBGKEY key_poll sees change"); } }
             Key_state_changes[tail].code = i & 0xFF;
             Key_state_changes[tail].down = down;
             tail = tail == 31 ? 0 : tail + 1;

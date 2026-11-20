@@ -147,7 +147,6 @@ static void set_control_permissions_jump(player* pp); // 0x006FBEB0 (:615)
 static void set_control_permissions_fall(player* pp); // 0x006FBFE0 (:665)
 static void set_control_permissions_based_on_player_state(player* pp); // 0x006F70C0 (:1137)
 static void process_player_movement_based_on_player_state(); // 0x006F70E0 (:1146)
-void openrfg_log(const char*);
 #include <cstdio>
 static bool maybe_ignore_movement_controls(); // 0x006F7110 (:1157)
 static void process_player_normal_movement_internal(bool ignore_movement); // 0x006FC3E0 (:1239)
@@ -774,7 +773,6 @@ static void set_control_permissions_based_on_player_state(player* pp)
 static void process_player_movement_based_on_player_state()
 {
     extern const control_callback_info Player_state_control_callbacks[17];
-    { static int s_c = 0; if ((s_c++ % 600) == 0) { char b[100]; snprintf(b, sizeof(b), "DBGMV2 state=%d cb=%p", (int)player_get_local_player()->cur_state, (void*)Player_state_control_callbacks[player_get_local_player()->cur_state].do_player_movement); openrfg_log(b); } }
     if (Player_state_control_callbacks[player_get_local_player()->cur_state].do_player_movement != nullptr)
     {
         Player_state_control_callbacks[player_get_local_player()->cur_state].do_player_movement();
@@ -1000,7 +998,6 @@ void control_gameplay_process()
             Interface_control_callbacks[Interface_mode].set_control_permissions(pp);
         }
         bool do_movement = !pp->is_killed();
-        { static int s_c3 = 0; if ((s_c3++ % 240) == 0) { char b[200]; snprintf(b, sizeof(b), "DBGMV3 imode=%d killed=%d cutscene=%d script=%d disable=%d locked=%d perm=%x state=%d", (int)Interface_mode, (int)pp->is_killed(), (int)cutscene_is_playing(), (int)pp->pflags.script_controlled, (int)pp->pflags.disable_controls, (int)pp->hflags.locked_controller, (unsigned)pp->controls_on_foot_allowed, (int)pp->cur_state); openrfg_log(b); } }
         if (hud_ui_multiplayer_splash_screen_is_active())
         {
             const control_button_action select = ui_get_control_button_value(BC_SELECT);
@@ -1679,15 +1676,12 @@ bool control_player_camera_input_enabled()
 static void process_player_normal_movement_internal(bool ignore_movement)
 {
     player* pp = player_get_local_player();
-    static int s_dbgMv = 0; s_dbgMv++;
     if (pp == nullptr || !pp->rdd.is_loaded())
     {
-        if ((s_dbgMv % 300) == 1) { char b[80]; snprintf(b, sizeof(b), "DBGMV early-return pp=%p loaded=%d", (void*)pp, pp ? (int)pp->rdd.is_loaded() : -1); openrfg_log(b); }
         return;
     }
     float h = controls_get_analog(CAA_WALK_TURN_LEFT_RIGHT, Player_controller_index);
     const float raw_v = controls_get_analog(CAA_WALK_FORWARD_BACKWARD, Player_controller_index);
-    if ((s_dbgMv % 300) == 1 || raw_v != 0.0f || h != 0.0f) { static int s_n = 0; if (s_n++ < 40) { char b[160]; snprintf(b, sizeof(b), "DBGMV h=%.2f v=%.2f ign=%d ctrlidx=%d locked=%d perm=%x", h, raw_v, (int)ignore_movement, (int)Player_controller_index, (int)pp->hflags.locked_controller, (unsigned)pp->controls_on_foot_allowed); openrfg_log(b); } }
     const float len_sq = (float)((double)h * (double)h + (double)raw_v * (double)raw_v);
     float v = raw_v;
     if (!(1.0f >= len_sq))

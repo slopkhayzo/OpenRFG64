@@ -516,7 +516,7 @@ namespace keen
             graphicsParameters.hInstance = nullptr;
             graphicsParameters.nShowCmd = SW_SHOW;
             // Magic numbers: 64 KB immediate geometry, 512 skinned instances in 40 MB.
-            graphicsParameters.immediateGeometryBufferSize = 0x10000u;
+            graphicsParameters.immediateGeometryBufferSize = 0x100000u; // OpenRFG: 1 MB (was 64 KB): a 400+ puff smoke instance did not fit and was skipped (flicker)
             graphicsParameters.supportScaling = true;
             graphicsParameters.createDefaultSwapChain = true;
             graphicsParameters.defaultDepthBufferFormat = PixelFormat_Default_Depth;

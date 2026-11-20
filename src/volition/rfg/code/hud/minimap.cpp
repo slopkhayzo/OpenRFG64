@@ -3512,8 +3512,8 @@ static bool minimap_car_bomb_hidden(const player* target)
         return false;
     }
     object* objp = World.object_from_handle(vehicle_handle);
-    // Magic numbers: sub type 4, an automobile; its field at 0x3D68 is 1 for the bomb car.
-    return objp != nullptr && objp->get_obj_type() == OT_VEHICLE && objp->get_sub_type() == 4 && *(int*)((char*)objp + 0x3D68) == 1;
+    // Magic number: sub type 4, an automobile; armed bomb status marks the bomb car (the raw 0x3D68 offset is wrong in 64-bit).
+    return objp != nullptr && objp->get_obj_type() == OT_VEHICLE && objp->get_sub_type() == 4 && vehicle_get_bomb_status(static_cast<const vehicle*>(objp)) == VEHICLE_BOMB_ARMED;
 }
 
 // 0x00870F80 (:5662)

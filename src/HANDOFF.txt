@@ -1,0 +1,16 @@
+
+ROUND 8 (crash in stream2_os_poll, rfg.cpp:2107 game_enable_table_precache)
+- stream2_os request handles were 32-bit pointers. On x64 handle = (device index<<16)|request index; helpers stream2_make_handle/stream2_handle_to_request in stream2_os.cpp (stream2_os.h private->public). Other 32-bit handle-as-pointer patterns will likely follow.
+- (Bridge dropped once mid-round; edit was re-applied after reconnect.)
+
+ROUND 27: main menu shows (logo/menu OK) but background black and mouse/keyboard dead, sound ok. Fixed graphicssystem_d3d11.cpp GetWindowLongW/SetWindowLongW(ptr) -> ...LongPtrW (lines 230,310; .bak). TEMP diag: application.cpp processInputEvent logs first 40 events as "DBGINPUT" via openrfg_log (look in openrfg_crash.txt; remove later; .bak). Next: if no DBGINPUT lines -> win32 msg path (inputsystem_win32.cpp / gameframework wndproc); if events present -> vlib input_poll/ui side. Black background = 3D menu scene (Mason) not drawn.
+ROUND 28: input events DO arrive (mouse move type11 class02, focus 14/15). Changed DBGINPUT to skip mouse moves (types 11,12) to see key/click events (type 7/8/10). Shutdown crash still pending (havok_memory_shutdown).
+ROUND 29: key(07/10 c01) & click(07 c02) events DO reach processInputEvent. Added TEMP logs (.bak3 files): DBGKEY (key.cpp key_poll), DBGMOUSE (mouse_generic.cpp), DBGUI (ui_document_manager.cpp, in button input loop). Find which stage stops; then remove.
+ROUND 30: new crash at boot (nondeterministic?): string_hash_table::add_string (string_pool.cpp:499) from bm_add_bitmap/hud_system_init. Suspect: et_ptr_offset (32-bit self-relative offset) between pool allocations >2GB apart in 64-bit. Added TEMP DBGOFFSET log in vlib/code/util/endian_type.inl from_pointer (.bak). Likely fix: make mempools allocate from one contiguous <2GB arena, or widen offsets. Previous DBGKEY/DBGMOUSE/DBGUI logs not yet read (crash came first).
+
+ROUND 59: round 58 bounds check ok; game reached Mission_Start, then crash in vehicle_stream_create_body (null shape): vehicle cm indices are garbage (cm_indices[200] stack values, i.e. file indices >= num_cms, or load_all returned too few models on x64). Added temp DBGVEH load log (num_cms, raw indices) in vehicle_load_collision_models. Untested.
+
+ROUND 61: round 59 log: DBGVEH load shows raw file indices fine (< num_cms) but after load the subinfo cm index is garbage (e.g. 76F3F390) => havok_cm_manager_load_all writes cm_indices wrongly on x64 (list->m_childInfo[i] stride / child count; known hkpListShapeChildInfo 32/24 mismatch). Added temp DBGCM log in havok_cm_manager_load_all loop (file_models vs children+disabled, shape ptr, idx). Untested.
+
+ROUND 147c: mctally: no lua morale/salvage calls; reward display bug is in UI script/text render (can't see script) - parked. Smoke flicker: particle pools in rl_particle_renderer.cpp initialize x4 on X64 + DBGPOOL 'partpool' traces (.bak147 in render_lib/code). Check grep partpool trace.log.
+R184: key test => streaks = PARAMETRIC RIBBON (keys 2 and 5 hide). Added PRIB trace (n, maxgap, time_created, lifetime, emit). Next user runs --game-trace near streaks, closes, Done; read 'PRIB' lines. Data copy vfx->rl looked correct.

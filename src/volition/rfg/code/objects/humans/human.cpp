@@ -4502,9 +4502,10 @@ bool human::create_shield_item(const item_info* i_info, bool visible)
     {
         return false;
     }
-    // Original: the item flags are only partly initialized; the other bits are those of the i_info pointer, whose
-    // stack slot the compiler reused (cast_shadows, cast_drop_shadows, simulate and no_physics are set).
-    unsigned int raw_flags = ((unsigned int)(uintptr_t)i_info & 0xFFFC6006u) | 0x6006u;
+    // Original: the item flags are only partly initialized; the other bits are stale stack garbage (the i_info pointer
+    // bits, meaningless and not 64-bit safe). Only the defined ones are set: cast_shadows, cast_drop_shadows, simulate
+    // and no_physics.
+    unsigned int raw_flags = 0x6006u;
     obj_item_props props(i_info, pos, orient, *(obj_item_flags*)&raw_flags, COLLIDE_ITEM, -1.0f, INVALID_SALVAGE_MATERIAL);
     item* shield = World.create_object<item>(props, 0xFFFFFFFF);
     if (shield == nullptr)

@@ -56,7 +56,6 @@ pair_linearcast_job_parameters::pair_linearcast_job_parameters()
 void havok_mt_query_initialize(hkpWorld* p_world)
 {
     Havok_mt_query_world = p_world;
-    { extern void openrfg_log(const char*); char bb[160]; snprintf(bb,sizeof(bb),"DBGMQ init: trig=%p (resetting to null)",(void*)Havok_mt_query_event_trigger); openrfg_log(bb); }
     Havok_mt_query_event_trigger = nullptr;
     Havok_mt_query_pair_linearcast_num_job_parameters = 0;
 }
@@ -115,12 +114,9 @@ static void havok_mt_query_job(cpu_job* p_job, cpu_job_arg arg1, cpu_job_arg arg
 }
 
 // 0x0082B280 (:260): queues the cast as a Havok job on the query trigger (inlines the two allocators above)
-void openrfg_log(const char*);
 void havok_mt_query_pair_linearcast(const hkpCollidable* p_collidable_to_cast, const hkVector4f& destination_position, const hkpCollidable* const* p_collidables_to_cast_against, unsigned int num_collidables_to_cast_against, unsigned int collidables_to_cast_against_stride, float tolerance, float max_extra_penetration, hkpCdPointCollector& p_cast_collector, hkpCdPointCollector* p_start_collector)
 {
-    { static int dn=0; if(dn<30){ char bb[200]; snprintf(bb,sizeof(bb),"DBGMQ enter trig=%p nparams=%u n=%d",(void*)Havok_mt_query_event_trigger,Havok_mt_query_pair_linearcast_num_job_parameters,dn); openrfg_log(bb);} dn++; }
     havok_mt_query_allocate_event_trigger();
-    { static int dm=0; if(dm<30){ char bb[200]; snprintf(bb,sizeof(bb),"DBGMQ after-alloc trig=%p",(void*)Havok_mt_query_event_trigger); openrfg_log(bb); dm++; } }
     pair_linearcast_job_parameters* params = havok_mt_query_allocate_linearcast_job_parameters();
     if (params == nullptr)
     {
@@ -154,7 +150,6 @@ void havok_mt_query_wait()
 {
     if (Havok_mt_query_event_trigger != nullptr)
     {
-        { static int dw=0; if(dw<30){ char bb[200]; snprintf(bb,sizeof(bb),"DBGMQ wait trig=%p",(void*)Havok_mt_query_event_trigger); openrfg_log(bb); dw++; } }
         scheduler_relinquish_cpu(Havok_mt_query_event_trigger, ccjt_any);
         Havok_mt_query_event_trigger = nullptr;
     }

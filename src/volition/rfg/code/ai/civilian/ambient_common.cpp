@@ -22,6 +22,13 @@ extern road_heap Road_heap; // road_heap.cpp
 
 static const float MIN_DESPAWN_DIST_SQ = 90000.0f; // 300 m from the player
 static const float MAX_DESPAWN_SEARCH_DIST_SQ = 250000.0f; // 500 m from the start
+// OpenRFG: the "Ambient range" option (game_options.cpp, 100-300 %) scales the despawn distances too.
+extern int Ambient_range_pct;
+static float amb_range_sq()
+{
+    const float s = (float)Ambient_range_pct * 0.01f;
+    return s * s;
+}
 static const float LOCAL_ROAD_DIST = 150.0f; // 0x012CEB50
 
 // 0x005E0C10
@@ -95,7 +102,7 @@ static void collect_local_road_list(const vector& pos, float size, farray<object
 static bool can_despawn_at_spline(const road_spline_identifier& destination_road_id, const player* pp)
 {
     const vector point = destination_road_id.road_spline->get_road_point(destination_road_id.point);
-    return MIN_DESPAWN_DIST_SQ < vec_dist_squared(pp->pos, point);
+    return MIN_DESPAWN_DIST_SQ * amb_range_sq() < vec_dist_squared(pp->pos, point);
 }
 
 // Which ways a point can be left. Broken and blocked segments stop the search across them.
@@ -165,7 +172,7 @@ static bool build_despawn_route_session(const road_spline_identifier& start_road
             return true;
         }
         const vector point = road->get_road_point(id.point);
-        if (MAX_DESPAWN_SEARCH_DIST_SQ < vec_dist_squared(goal_pos, point))
+        if (MAX_DESPAWN_SEARCH_DIST_SQ * amb_range_sq() < vec_dist_squared(goal_pos, point))
         {
             continue;
         }

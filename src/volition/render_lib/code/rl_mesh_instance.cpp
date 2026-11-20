@@ -23,6 +23,7 @@
 #include "volition/render_lib/code/rl_mesh_data.h"
 #include "volition/render_lib/code/rl_metrics.h"
 #include "volition/render_lib/code/rl_planar_decal.h"
+#include "volition/render_lib/code/rl_small_array.h"
 #include "volition/render_lib/code/rl_render_lib.h"
 #include "volition/render_lib/code/rl_renderer.h"
 #include "volition/render_lib/code/rl_renderer_core.h"
@@ -231,7 +232,7 @@ void rl_mesh_instance::get_material_block_counts(int* buffer, const rl_camera* p
 void rl_mesh_instance::add_material_stats_to_batch(rl_batched_pass* pass_p, const rl_camera* pCamera)
 {
     const int num_materials = m_mat_map->get_num_materials();
-    std::vector<int> counts(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<int> counts(num_materials, 0);
     get_material_block_counts(counts.data(), pCamera);
     const unsigned int vis_flags = get_vis_pass_flags();
     for (int i = 0; i < m_mat_map->get_num_materials(); i++)
@@ -247,47 +248,6 @@ void rl_mesh_instance::add_material_stats_to_batch(rl_batched_pass* pass_p, cons
 // Ages the decals, and a batchable opaque instance registers its block counts with the scene's base pass.
 void rl_mesh_instance::on_visible_for_frame(rl_renderer& renderer)
 {
-    {   // DBGDECAL: validate the decal ring before using it (x64 debugging)
-        rl_decal* h = m_decal_list;
-        bool bad = false;
-        if (h != nullptr)
-        {
-            if ((uintptr_t)h < 0x10000) bad = true;
-            else
-            {
-                rl_decal* d = h; int n = 0;
-                do {
-                    if ((uintptr_t)d->next < 0x10000 || (uintptr_t)d->prev < 0x10000 || d->get_owner() != (rl_renderable_instance*)this || d->next->prev != d) { bad = true; break; }
-                    d = d->next;
-                } while (d != h && ++n < 100000);
-            }
-        }
-        if (bad)
-        {
-            extern void openrfg_log(const char*);
-            char b[256];
-            sprintf_s(b, "DBGDECAL bad ring this=%p head=%p next=%p prev=%p owner=%p", (void*)this, (void*)h,
-                      (uintptr_t)h > 0x10000 ? (void*)h->next : nullptr, (uintptr_t)h > 0x10000 ? (void*)h->prev : nullptr,
-                      (uintptr_t)h > 0x10000 ? (void*)h->get_owner() : nullptr);
-            openrfg_log(b);
-            {
-                char c[400];
-                const unsigned long long* q = (const unsigned long long*)h;
-                sprintf_s(c, "DBGDECAL2 renderable=%p headq=%llx %llx %llx %llx %llx %llx %llx %llx sizeof_ri=%d sizeof_decal=%d", (void*)get_renderable(),
-                          (uintptr_t)h > 0x10000 ? q[0] : 0, (uintptr_t)h > 0x10000 ? q[1] : 0, (uintptr_t)h > 0x10000 ? q[2] : 0, (uintptr_t)h > 0x10000 ? q[3] : 0,
-                          (uintptr_t)h > 0x10000 ? q[4] : 0, (uintptr_t)h > 0x10000 ? q[5] : 0, (uintptr_t)h > 0x10000 ? q[6] : 0, (uintptr_t)h > 0x10000 ? q[7] : 0,
-                          (int)sizeof(rl_mesh_instance), (int)sizeof(rl_decal));
-                openrfg_log(c);
-            }
-            {
-                char e[300];
-                sprintf_s(e, "DBGDECAL3 off_decal=%d off_matmap=%d matmap=%p head_is_matmap=%d leafid=%x", (int)((char*)&m_decal_list - (char*)this),
-                          (int)((char*)&m_mat_map - (char*)this), (void*)m_mat_map, (int)((void*)m_mat_map == (void*)h), (unsigned)get_leaf_class_id());
-                openrfg_log(e);
-            }
-            m_decal_list = nullptr;
-        }
-    }
     rl_decal_process_decals(&m_decal_list);
     if (get_sort_method() == SORT_METHOD_NONE && !get_is_transparent() && get_is_batchable())
     {
@@ -309,7 +269,7 @@ void rl_mesh_instance::add_to_batch(rl_batched_pass* pass_p, const rl_camera* pC
     rl_scene* scene_p = get_scene();
     const unsigned int non_shadow_flags = scene_p->get_visibility_manager()->get_non_shadow_vis_flags() & vis_flags;
     const int num_materials = m_mat_map->get_num_materials();
-    std::vector<int> counts(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<int> counts(num_materials, 0);
     get_material_block_counts(counts.data(), pCamera);
     vector render_offset;
     scene_p->get_render_offset(render_offset);
@@ -351,8 +311,8 @@ void rl_mesh_instance::add_to_batch(rl_batched_pass* pass_p, const rl_camera* pC
             transform_index = 0x7FFFFFFF;
         }
         const rl_mesh* mesh_p = (const rl_mesh*)m_renderable_p;
-        std::vector<rl_batched_instance*> slots(num_materials > 0 ? num_materials : 0, nullptr);
-        std::vector<int> used(num_materials > 0 ? num_materials : 0, 0);
+        rl_small_array<rl_batched_instance*> slots(num_materials, nullptr);
+        rl_small_array<int> used(num_materials, 0);
         for (int i = 0; i < m_mat_map->get_num_materials(); i++)
         {
             if (counts[i] != 0)

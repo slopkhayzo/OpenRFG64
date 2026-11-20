@@ -1637,12 +1637,6 @@ bool human_voice_persona::can_load() const
 // 0x00A31CA0 (:3081): requested now when a slot is free, else at the next slot reallocation.
 void human_voice_persona::background_load_request()
 {
-    { // DBGPERS temp
-        extern void openrfg_log(const char*);
-        char b[240];
-        snprintf(b, sizeof(b), "DBGPERS bg_load_request srid=%u status=%d refcnt=%d is_loading=%d loaded_count=%d max=%d", srid, (int)stream2_get_status(srid), (int)stream2_get_ref_count(srid), (int)is_loading(), (int)count_loaded_personas(), (int)MAX_STREAMED_PERSONAS);
-        openrfg_log(b);
-    }
     if (is_loading())
     {
         return;
@@ -2446,12 +2440,6 @@ bool human_voice_activity_release_voice(unsigned int activity_spawn_handle)
 // 0x00A598B0 (:4027): always loaded voices need no slot.
 bool human_voice_cutscene_reserve_slot(const human_voice_persona* desired_voice)
 {
-    { // DBGPERS temp
-        extern void openrfg_log(const char*);
-        char b[240];
-        snprintf(b, sizeof(b), "DBGPERS reserve_slot p=%p full=%d always=%d handle=%d", (const void*)desired_voice, desired_voice ? 0 : -1, desired_voice ? (int)desired_voice->is_always_loaded() : -1, desired_voice ? (int)human_voice_persona_get_handle(desired_voice) : -9);
-        openrfg_log(b);
-    }
     if (desired_voice == nullptr || Cutscene_voice_list.full())
     {
         return false;

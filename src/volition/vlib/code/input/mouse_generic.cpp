@@ -82,7 +82,6 @@ void mouse_generic_poll()
     Mouse_x = Mouse_raw_x;
     for (unsigned int i = 0; i < 5; i++)
     {
-        { static int n = 0; if (n < 10 && Cached_input_states[Current_cached_input_state].mouse.buttons[i]) { n++; openrfg_log("DBGMOUSE button seen in poll"); } }
         mouse_mark_button(i, Cached_input_states[Current_cached_input_state].mouse.buttons[i]);
     }
 }

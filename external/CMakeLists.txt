@@ -23,3 +23,22 @@ if(MSVC)
     set_target_properties(openrfg_zlib PROPERTIES COMPILE_OPTIONS "${openrfg_zlib_options}")
     target_compile_options(openrfg_zlib PRIVATE /w)
 endif()
+
+# libdeflate 1.23 (unmodified sources, see libdeflate/README.openrfg). Decompression only. Used for the fast
+# whole-buffer inflate of streamed containers (keen_cf_read_compressed_chain); zlib stays as the fallback.
+add_library(openrfg_libdeflate STATIC
+    libdeflate/lib/adler32.c
+    libdeflate/lib/deflate_decompress.c
+    libdeflate/lib/zlib_decompress.c
+    libdeflate/lib/utils.c
+    libdeflate/lib/x86/cpu_features.c
+)
+target_include_directories(openrfg_libdeflate PUBLIC libdeflate)
+if(MSVC)
+    get_target_property(openrfg_ld_options openrfg_libdeflate COMPILE_OPTIONS)
+    if(openrfg_ld_options)
+        list(REMOVE_ITEM openrfg_ld_options /W4)
+        set_target_properties(openrfg_libdeflate PROPERTIES COMPILE_OPTIONS "${openrfg_ld_options}")
+    endif()
+    target_compile_options(openrfg_libdeflate PRIVATE /w)
+endif()

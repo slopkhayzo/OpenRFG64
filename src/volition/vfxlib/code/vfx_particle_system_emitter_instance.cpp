@@ -22,6 +22,7 @@
 #include "volition/vlib/code/memory/vmemory.h"
 
 #include <math.h>
+#include "volition/rfg/code/gamewide/game_trace.h" // DBGSPN
 
 // ---- statics
 const vector vfx_particle_system_emitter_instance::SCALE_IDENTITY_VECTOR(1.0f, 1.0f, 1.0f); // 0x016F1010
@@ -191,6 +192,7 @@ void vfx_particle_system_emitter_instance::init(vfx_particle_system_emitter* emi
     reset();
     last_spawn_time = 0.0f;
     m_first_update = true;
+    m_snap_spawn = true;
 }
 
 // 0x00CB0130 (:119): kills every particle (lifetime 0, they die on the next update) and returns the tails.
@@ -599,6 +601,12 @@ int vfx_particle_system_emitter_instance::spawn_internal(int num, float elapsed_
         return 0;
     }
     update_internal_transforms();
+    if (m_snap_spawn) // OpenRFG
+    {
+        m_snap_spawn = false;
+        previous_spawn_position = current_world_matrix.m_translation;
+        current_spawn_position = current_world_matrix.m_translation;
+    }
     float emission_rate = get_emission_rate();
     const float start_time = elapsed_time - last_spawn_time;
     previous_spawn_position = current_spawn_position;
@@ -883,6 +891,7 @@ int vfx_particle_system_emitter_instance::spawn_internal(int num, float elapsed_
         // The emitter shape places the particle and sets the birth direction.
         m_emitter_p->spawn_particle(particle_p, this);
         m_emitter_p->initiate_velocity(particle_p, this);
+        // { static int spn_ = 0; if (!is_iterative && m_emitter_p->m_particle_type == rl_particle_base::RENDER_TYPE_RIBBON && spn_ < 100000000) { spn_++; GAME_TRACE("part", "SPN i=%d/%d el=%.3f pos=%.1f,%.1f,%.1f prev=%.1f,%.1f,%.1f cur=%.1f,%.1f,%.1f trans=%.1f,%.1f,%.1f par=%.1f,%.1f,%.1f local=%d", index, num, current_elapsed_time, particle_p->position.x, particle_p->position.y, particle_p->position.z, previous_spawn_position.x, previous_spawn_position.y, previous_spawn_position.z, current_spawn_position.x, current_spawn_position.y, current_spawn_position.z, current_world_matrix.m_translation.x, current_world_matrix.m_translation.y, current_world_matrix.m_translation.z, m_parent_transform.m_translation.x, m_parent_transform.m_translation.y, m_parent_transform.m_translation.z, (int)m_emitter_p->local_space_emission); } } // DBGSPN
         if (!m_emitter_p->local_space_emission)
         {
             current_spawn_position.x = spawn_step.x + current_spawn_position.x;
@@ -1080,6 +1089,7 @@ void vfx_particle_system_emitter_instance::copy_particles(rl_renderable_particle
         while (particle_p != nullptr)
         {
             particle_p->copy_to_rl_particle(renderable_instance_p->m_particle_parametric_list[index]);
+            // { static int cp_ = 0; if (m_emitter_p->m_particle_type == rl_particle_base::RENDER_TYPE_RIBBON && index < 2 && m_particle_parametric_list.get_elem_count() == 2 && ((index == 0 ? cp_++ : cp_) % 4) == 0) GAME_TRACE("part", "CPY i=%d ptr=%p el=%.3f pos=%.1f,%.1f,%.1f vel=%.1f,%.1f,%.1f tc=%.3f emit=%d", index, (const void*)particle_p, current_elapsed_time, particle_p->position.x, particle_p->position.y, particle_p->position.z, particle_p->velocity.x, particle_p->velocity.y, particle_p->velocity.z, particle_p->time_created, (int)particle_p->emit_number); } // DBGSPN
             index++;
             particle_p = particle_p->next;
             if (particle_p == m_particle_parametric_list.first())

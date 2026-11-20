@@ -1,0 +1,85 @@
+// OpenRFG temporary stopwatch (new code, not in the original game). FRAME_PROF("name") times the rest of the enclosing
+// block; every 300 simulated frames frame_prof_report() writes the average and worst microseconds per frame of each
+// section to trace.log (category "prof"), but only with --game-trace. Remove once the slow spots are found.
+#pragma once
+
+#include "volition/rfg/code/gamewide/game_trace.h"
+#include "volition/vlib/code/os/timer.h"
+
+struct frame_prof_entry
+{
+    const char* name;
+    long long total;
+    int worst;
+    int calls;
+};
+
+inline frame_prof_entry Frame_prof_entries[48];
+inline int Frame_prof_count;
+inline int Frame_prof_frames;
+inline int Frame_prof_last_time;
+
+inline int frame_prof_register(const char* name)
+{
+    if (Frame_prof_count >= 48)
+    {
+        return 47;
+    }
+    Frame_prof_entries[Frame_prof_count].name = name;
+    return Frame_prof_count++;
+}
+
+struct frame_prof_scope
+{
+    int id;
+    int start;
+    explicit frame_prof_scope(int i) : id(i), start(Game_trace_file != nullptr ? timer_get(TIMER_MICROSECONDS) : 0) {}
+    ~frame_prof_scope()
+    {
+        if (Game_trace_file != nullptr)
+        {
+            const int us = timer_get(TIMER_MICROSECONDS) - start;
+            frame_prof_entry& e = Frame_prof_entries[id];
+            e.total += us;
+            e.calls++;
+            if (us > e.worst)
+            {
+                e.worst = us;
+            }
+        }
+    }
+};
+
+#define FRAME_PROF(name) \
+    static const int frame_prof_id_ = frame_prof_register(name); \
+    frame_prof_scope frame_prof_scope_(frame_prof_id_)
+
+#define FRAME_PROF_CALL(name, call) \
+    do \
+    { \
+        FRAME_PROF(name); \
+        call; \
+    } while (0)
+
+inline void frame_prof_report()
+{
+    if (Game_trace_file == nullptr || ++Frame_prof_frames < 300)
+    {
+        return;
+    }
+    const int now = timer_get(TIMER_MICROSECONDS);
+    GAME_TRACE("prof", "---- %d frames, %.1f ms per frame wall clock", Frame_prof_frames, (double)(now - Frame_prof_last_time) / 1000.0 / Frame_prof_frames);
+    for (int i = 0; i < Frame_prof_count; i++)
+    {
+        frame_prof_entry& e = Frame_prof_entries[i];
+        if (e.total / Frame_prof_frames >= 20)
+        {
+            GAME_TRACE("prof", "%-28s avg %6lld us/frame  worst %7d us  calls/frame %.1f", e.name, e.total / Frame_prof_frames, e.worst, (double)e.calls / Frame_prof_frames);
+        }
+        e.total = 0;
+        e.worst = 0;
+        e.calls = 0;
+    }
+    Frame_prof_frames = 0;
+    Frame_prof_last_time = now;
+}

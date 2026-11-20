@@ -1,0 +1,2 @@
+libdeflate v1.23 (https://github.com/ebiggers/libdeflate, MIT). Unmodified lib/ sources; only the zlib/deflate
+decompression files are built (see external/CMakeLists.txt).

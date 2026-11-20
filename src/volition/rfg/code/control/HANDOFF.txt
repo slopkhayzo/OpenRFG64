@@ -1,0 +1,2 @@
+
+ROUND 88: round 87 fix worked (no crash, 80s run, Dan dialogue ends). Problems: player will not move (pos constant in trace), graphics artifacts. Added TEMP DBGMV/DBGMV2 logs in control_gameplay.cpp (.bak88) in process_player_normal_movement_internal/process_player_movement_based_on_player_state: shows analog h/v, ignore flag, locked_controller, perms. Check "DBGMV" lines via latest.sh.

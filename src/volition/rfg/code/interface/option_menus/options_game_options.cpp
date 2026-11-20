@@ -8,6 +8,7 @@
 #include "volition/rfg/code/interface/option_menus/option_menu_system.h"
 
 #include "library/modules/runtime/base/include/keen/base/language.hpp"
+#include "keen/base/crc32.hpp"
 #include "keen/base/string.hpp"
 #include "keen/base/trace.hpp"
 #include "volition/interface_lib/code/vint_document.h"
@@ -119,6 +120,37 @@ static void game_options_set_char_list(int index, int value)
     }
 }
 
+// OpenRFG: the "Ambient range" row (spawn/despawn distance of ambient pedestrians and traffic, 100-600 %).
+extern int Ambient_range_pct; // game_options.cpp
+static const int kAmbientRangePct[9] = {100, 125, 150, 200, 250, 300, 400, 500, 600};
+static const char* cAmbientRangeChoices[9] = {"OPENRFG_AMB_100", "OPENRFG_AMB_125", "OPENRFG_AMB_150", "OPENRFG_AMB_200", "OPENRFG_AMB_250", "OPENRFG_AMB_300", "OPENRFG_AMB_400", "OPENRFG_AMB_500", "OPENRFG_AMB_600"};
+static const wchar_t* kAmbientRangeText[9] = {L"100%", L"125%", L"150%", L"200%", L"250%", L"300%", L"400%", L"500%", L"600%"};
+static wchar_t kAmbientRangeCaption[] = L"Ambient Range (experimental)";
+
+// The row's text is not in the game's localization data: add it (once).
+static void game_options_add_ambient_text(const char* key, const wchar_t* text)
+{
+    const unsigned int hash = keen::getCrc32LwrValue(key);
+    wchar_t* existing = nullptr;
+    Localization_hash.get(hash, existing);
+    if (existing == nullptr)
+    {
+        Localization_hash.insert_key_data(hash, const_cast<wchar_t*>(text));
+    }
+}
+
+static int game_options_ambient_index()
+{
+    for (int i = 0; i < 9; i++)
+    {
+        if (kAmbientRangePct[i] == Ambient_range_pct)
+        {
+            return i;
+        }
+    }
+    return 0;
+}
+
 // 0x00892920 (:327)
 static void option_change_occurred_goptions(int choice, void* new_value)
 {
@@ -180,6 +212,13 @@ static void option_change_occurred_goptions(int choice, void* new_value)
     case 6:
         Change_made_goptions = true;
         Camera_shake_enabled = value == 0;
+        return;
+    case 9:
+        if (value < 9)
+        {
+            Ambient_range_pct = kAmbientRangePct[value];
+            Change_made_goptions = true;
+        }
         return;
     case 7:
         // The system language is stored as "none".
@@ -358,6 +397,12 @@ static void game_options_menu_create()
     ui_menu_add_char_list_item(Menu_handle_goptions, "MENU_CAMERA_SHAKE", cTool_tips_enabled, 2, option_change_occurred_goptions, 0, true);
     ui_menu_add_char_list_item(Menu_handle_goptions, "LANGUAGE_SETTINGS_TEXT_LANGUAGE", Language_choice_pointers, Num_language_choices, option_change_occurred_goptions, 0, true);
     ui_menu_add_char_list_item(Menu_handle_goptions, "LANGUAGE_SETTINGS_AUDIO_LANGUAGE", Language_choice_pointers_audio, Num_language_choices_audio, option_change_occurred_goptions, 0, true);
+    game_options_add_ambient_text("OPENRFG_AMB_CAPTION", kAmbientRangeCaption);
+    for (int i = 0; i < 9; i++)
+    {
+        game_options_add_ambient_text(cAmbientRangeChoices[i], kAmbientRangeText[i]);
+    }
+    ui_menu_add_char_list_item(Menu_handle_goptions, "OPENRFG_AMB_CAPTION", cAmbientRangeChoices, 9, option_change_occurred_goptions, game_options_ambient_index(), true);
     game_options_set_menu_selections();
     ui_menu_show_menu_item(Menu_handle_goptions, GOPTIONS_ROW_DISABLE_COVER, false);
     ui_menu_enable_menu_item(Menu_handle_goptions, GOPTIONS_ROW_DISABLE_COVER, false);

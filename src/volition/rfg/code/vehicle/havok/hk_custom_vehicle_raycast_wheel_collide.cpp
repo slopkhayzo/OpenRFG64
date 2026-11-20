@@ -21,13 +21,14 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/vehicle/suspension/hkpvehiclesuspension.h"
 #include "volition/rfg/code/havok/havok.h"
 #include "volition/rfg/code/havok/havok_convert.h"
+#include "volition/rfg/code/objects/movers/general_mover.h"
 #include "volition/rfg/code/objects/object.h"
 #include "volition/rfg/code/vehicle/havok/hk_custom_vehicle_instance.h"
 #include "volition/vlib/code/math/floating.h"
 
 static vehicle_wheel_cast_type vehicle_wheel_cast_default_mode = VEHICLE_WHEEL_CAST_SPHERE; // 0x016BA498
 
-// An infinite mass vehicle only rests on zones and on rfg movers without gm_flags. 0xF8: the first field past
+// An infinite mass vehicle only rests on zones and on rfg movers without gm_flags. gm_flags: the first field past
 // object_mover (gm_flags); the type check has already said this is an rfg_mover.
 static bool wheel_hit_allowed_for_infinite_mass(const hkpWorldObject* wp)
 {
@@ -40,7 +41,7 @@ static bool wheel_hit_allowed_for_infinite_mass(const hkpWorldObject* wp)
     {
         return true;
     }
-    return obj->get_obj_type() == OT_MOVER && obj->get_sub_type() == OT_SUB_MOVER_RFG && *reinterpret_cast<const int*>(reinterpret_cast<const char*>(obj) + 0xF8) == 0;
+    return obj->get_obj_type() == OT_MOVER && obj->get_sub_type() == OT_SUB_MOVER_RFG && static_cast<const general_mover*>(obj)->gm_flags == 0;
 }
 
 // The world object of a root collidable, or null if it is not an entity. 1: hkpWorldObject::BROAD_PHASE_ENTITY.
