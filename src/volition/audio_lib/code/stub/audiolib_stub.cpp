@@ -8,6 +8,7 @@
 // Compiled last in audio_lib_unity.cpp (Soundbank_list and Audiolib_hw_init_min are statics of audiolib.cpp there).
 
 #include "volition/audio_lib/code/stub/audiolib_stub.h"
+#include "memtest/memtest.h" // memtest: the big streamed waves' life
 
 #include "keen/base/framenumber.hpp"
 #include "keen/base/memoryallocator.hpp"
@@ -627,6 +628,11 @@ audiolib_result audiolib_hw_destroy(audiolib_play_data* play)
     // A streamed play owns its wave data and its dynamic definition.
     if (play->hw_info.streamingWaveData.dataSize != 0)
     {
+        if (play->hw_info.streamingWaveData.pData != nullptr && play->hw_info.streamingWaveData.dataSize >= (4u << 20)) // memtest
+        {
+            memtest_event("audio: streamed play %p destroyed: its %.1f MB given back", (void*)play,
+                          (double)play->hw_info.streamingWaveData.dataSize / 1048576.0);
+        }
         if (play->hw_info.streamingWaveData.pData != nullptr)
         {
             m_pAudioBankAllocator->free(play->hw_info.streamingWaveData.pData);
@@ -661,6 +667,10 @@ audiolib_result audiolib_hw_stop(audiolib_play_data* play)
     if (play->hw_info.hw_play_handle == 0xFFFF)
     {
         return AUDIOLIB_ERR_BAD_PLAY_ID;
+    }
+    if (play->hw_info.streamingWaveData.dataSize >= (4u << 20)) // memtest
+    {
+        memtest_event("audio: streamed play %p stopped (hw play state %d)", (void*)play, (int)play->hw_play_state);
     }
     if (play->hw_info.hw_play_handle != 0)
     {
@@ -1092,6 +1102,11 @@ audiolib_result audiolib_prepare_streaming_sound(audiolib_play_data* play)
     wave = hw.streamingWaveData[waveIndex];
     // The whole wave in one allocation from the bank allocator (Kaiko's streaming, SFX.md 1.3).
     wave.pData = m_pAudioBankAllocator->allocate(wave.dataSize, 16, 0, nullptr);
+    if (wave.pData != nullptr && wave.dataSize >= (4u << 20)) // memtest: the big streamed waves (music), their life
+    {
+        memtest_event("audio: streamed play %p (%s): %.1f MB of wave data from the bank allocator", (void*)play,
+                      audiolib_internal_debug_foley_name(play->foley_data.name_crc), (double)wave.dataSize / 1048576.0);
+    }
     if (wave.pData == nullptr)
     {
         // Original: the %d (the size) is not passed.
