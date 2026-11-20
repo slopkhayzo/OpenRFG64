@@ -119,10 +119,11 @@ static rl_deferred_batch_item deferred_items_array[DEFERRED_ITEMS_MAX]; // 0x01C
 // The shadow map size per shadow LOD (off, low, medium, high).
 static const int shadow_map_resolutions[4] = { 0, 512, 1024, 2048 }; // 0x012C1BB4
 
-// Deferred sort list capacities (0x2400, 200, 200) and the transparent shadow casters (100).
-static const int DEFERRED_SORT_MAX = 0x2400;
-static const int DEFERRED_SORT_FIRST_MAX = 200;
-static const int DEFERRED_SORT_LAST_MAX = 200;
+// Deferred sort list capacities (0x2400, 200, 200 in rfg.exe; scaling, OpenRFG64-memtest: 0x10000, 1024, 1024, the
+// arrays' sizes in rl_scene_renderer.h) and the transparent shadow casters (100).
+static const int DEFERRED_SORT_MAX = 0x10000;
+static const int DEFERRED_SORT_FIRST_MAX = 1024;
+static const int DEFERRED_SORT_LAST_MAX = 1024;
 static const unsigned int TRANSPARENT_SHADOW_CASTERS_MAX = 100;
 static const unsigned int UNBATCHED_RENDERABLES_MAX = 0x1000;
 
@@ -1119,6 +1120,21 @@ void rl_scene_renderer::render_deferred_list(rl_renderer& renderer, rl_camera& c
 void rl_scene_renderer::render_deferred(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_shadow_render_parameters& shadow_render_params, const unsigned int vis_flags, const float fade_range, const bool skip_decals, const bool alpha_blend, const bool msaa_enabled)
 {
     rl_particle_renderer::get_instance()->reset_deferred();
+    // OpenRFG64-memtest fix: the adds count past a full list (they write up to its capacity less one); rfg.exe then
+    // sorted and drew past the array's end, and a garbage entry crashed the frame (render_deferred_list,
+    // get_distortion_only: ten avenues). Only the written entries now.
+    if (m_num_deferred_sort_entries > (unsigned int)DEFERRED_SORT_MAX - 1)
+    {
+        m_num_deferred_sort_entries = DEFERRED_SORT_MAX - 1;
+    }
+    if (m_num_deferred_sort_entries_first > (unsigned int)DEFERRED_SORT_FIRST_MAX - 1)
+    {
+        m_num_deferred_sort_entries_first = DEFERRED_SORT_FIRST_MAX - 1;
+    }
+    if (m_num_deferred_sort_entries_last > (unsigned int)DEFERRED_SORT_LAST_MAX - 1)
+    {
+        m_num_deferred_sort_entries_last = DEFERRED_SORT_LAST_MAX - 1;
+    }
     std::sort(m_deferred_sort_entries, m_deferred_sort_entries + m_num_deferred_sort_entries, deferred_sort_entry::btf_predicate);
     render_deferred_list(renderer, camera, light, shadow_render_params, vis_flags, fade_range, skip_decals, alpha_blend, m_deferred_sort_entries_first, m_num_deferred_sort_entries_first, msaa_enabled);
     render_deferred_list(renderer, camera, light, shadow_render_params, vis_flags, fade_range, skip_decals, alpha_blend, m_deferred_sort_entries, m_num_deferred_sort_entries, msaa_enabled);

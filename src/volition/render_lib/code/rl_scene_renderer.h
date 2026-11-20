@@ -272,12 +272,15 @@ private:
     rl_level_of_detail m_new_level_of_detail; // 0x578
     static const int kDownsampleTechnique; // 0x012BED20
     rl_gaussian5x5_blur_kernel m_blur_kernel; // 0x60C
+    // scaling (OpenRFG64-memtest): the deferred (alpha-blended) lists hold 65,536, 1,024 and 1,024 entries (rfg.exe
+    // 9,216, 200 and 200; the capacities are DEFERRED_SORT_*_MAX in rl_scene_renderer.cpp): a map of ten avenues,
+    // a glass pane per window, passed 9,216 in a frame. Offsets past m_num_deferred_sort_entries differ from rfg.exe.
     volatile unsigned int m_num_deferred_sort_entries; // 0x724
-    deferred_sort_entry m_deferred_sort_entries[9216]; // 0x728
+    deferred_sort_entry m_deferred_sort_entries[0x10000]; // 0x728 (9216)
     volatile unsigned int m_num_deferred_sort_entries_first; // 0x48728
-    deferred_sort_entry m_deferred_sort_entries_first[200]; // 0x4872C
+    deferred_sort_entry m_deferred_sort_entries_first[1024]; // 0x4872C (200)
     volatile unsigned int m_num_deferred_sort_entries_last; // 0x4A02C
-    deferred_sort_entry m_deferred_sort_entries_last[200]; // 0x4A030
+    deferred_sort_entry m_deferred_sort_entries_last[1024]; // 0x4A030 (200)
     farray<rl_renderable_instance*,50> m_distortion_only_entries; // 0x4B930
     farray<saved_texture,16> m_saved_textures; // 0x4BA08
     rl_dev_texture m_locked_framebuffer_texture; // 0x4BB18
