@@ -37,6 +37,18 @@ bool scaling_commit(const void* p, size_t size);
 // zeroed when touched again). False when the range is not in a region (the caller zeroes it itself).
 bool scaling_reset(void* p, size_t size);
 
+// A stream2 container past 2 GB (a big map's World container): a block of the "big containers" region, which lies
+// right below Havok's heap in its reservation with level memory (memorylayout_win32.cpp). Blocks are taken from the
+// region's top, next to Havok's heap, so that their links into it stay as near as they can. Any size the region holds
+// (64-bit); committed whole, given back at its free. Null when it does not fit or there is no such region.
+void* scaling_big_alloc(unsigned long long bytes, unsigned int align, const char* name);
+// True when p lies in the "big containers" region; false: not one of them. A block of parts loses one (and goes with
+// its last); a whole block goes when p is its start.
+bool scaling_big_free(void* p);
+// A block whose primitives are carved from it (a big container of primitives, stream2's SCM_PRIM): delta parts more
+// (+1 for each primitive placed in it). Each part's free (scaling_big_free) takes one off.
+void scaling_big_parts(void* block, int delta);
+
 // Whole committed blocks straight from the system (Havok's heap pages: they come and go whole, they are not regions).
 void* scaling_system_alloc(size_t bytes);
 void scaling_system_free(void* p);

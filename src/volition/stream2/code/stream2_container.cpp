@@ -30,6 +30,7 @@
 #include "volition/rfg/code/rfg.h"
 #include "volition/stream2/code/stream2.h"
 #include "volition/stream2/code/stream2_allocator.h"
+#include "scaling/scaling.h" // scaling: big containers of primitives
 #include "volition/vlib/code/cfile/cfile.h"
 #include "volition/vlib/code/memory/mempool_base.h"
 #include "volition/vlib/code/util/string_comp.h"
@@ -820,6 +821,41 @@ bool stream2_container::alloc()
             VLIB_CRITICAL_FAILURE();
             return false;
         }
+        // scaling (OpenRFG64-memtest): a container of primitives past 2 GB (a big map's World container, ns_base: the
+        // primitives of 480 building types, 4.5 GB) does not fit level memory (32-bit, 3.5 GB). The primitives of its
+        // own allocator are carved from one block of the "big containers" region instead, each a part of it: a
+        // primitive's free gives its part back, and the block goes with the last (scaling_big_free). Below 2 GB, the
+        // game's way, one allocation each.
+        unsigned char* big = nullptr;
+        unsigned long long big_at = 0;
+        int carved = 0;
+        if (dynamic_cast<stream2_dynamic_allocator*>(cdef->allocator) != nullptr)
+        {
+            unsigned long long total = 0;
+            for (int i = 0; i < num_entries; i++)
+            {
+                const stream2_prim* const prim = entries[i].prim;
+                // the container's own allocator, by index too (a map's asm names it: allocator 1, the World's)
+                if (!entries[i].enable || prim->cpu_data != nullptr ||
+                    (prim->allocator_idx != 0 ? _Stream_allocators[prim->allocator_idx] : cdef->allocator) != cdef->allocator)
+                {
+                    continue;
+                }
+                const stream2_prim_def* const pdef = prim->pdef;
+                unsigned long long bytes = (unsigned int)prim->cpu_size;
+                if (pdef->flags.alloc_split && !shouldPrimUseGPU(prim))
+                {
+                    bytes += (unsigned int)prim->gpu_size;
+                }
+                total = align_up_wide(total, pdef->cpu_align > 16 ? pdef->cpu_align : 16) + bytes + (unsigned int)pdef->gpu_align;
+            }
+            if (total > 0x7FFFFFFFull)
+            {
+                big = (unsigned char*)scaling_big_alloc(total, 0x10000, name);
+                keen::debug::nativePrintArgs("[Stream2] <alloc> container %s: %llu bytes of primitives, %s\n", name, total,
+                                             big != nullptr ? "carved from a block of the big containers region" : "no block for them (level memory then)");
+            }
+        }
         for (int i = 0; i < num_entries; i++)
         {
             if (!entries[i].enable)
@@ -841,7 +877,20 @@ bool stream2_container::alloc()
                 gpu_bytes = 0;
             }
             stream2_allocator* const allocator = prim->allocator_idx != 0 ? _Stream_allocators[prim->allocator_idx] : cdef->allocator;
-            allocator->alloc(cpu_bytes, pdef->cpu_align, prim->cpu_data, 0, pdef->gpu_align, prim->gpu_data, prim->name);
+            if (big != nullptr && allocator == cdef->allocator)
+            {
+                // scaling: its part of the container's big block (with room for the gpu data's alignment below)
+                big_at = align_up_wide(big_at, pdef->cpu_align > 16 ? pdef->cpu_align : 16);
+                prim->cpu_data = big + big_at;
+                prim->gpu_data = nullptr;
+                big_at += (unsigned int)cpu_bytes + (unsigned int)pdef->gpu_align;
+                scaling_big_parts(big, 1);
+                carved++;
+            }
+            else
+            {
+                allocator->alloc(cpu_bytes, pdef->cpu_align, prim->cpu_data, 0, pdef->gpu_align, prim->gpu_data, prim->name);
+            }
             int gpu_needed = 0;
             if (gpu_bytes != 0)
             {
@@ -851,6 +900,10 @@ bool stream2_container::alloc()
             }
             if (prim->cpu_data == nullptr)
             {
+                if (big != nullptr && carved == 0)
+                {
+                    scaling_big_free(big); // nothing in it yet: freed by its start
+                }
                 return false;
             }
             if (gpu_needed > 0 && prim->gpu_data == nullptr)
@@ -865,6 +918,10 @@ bool stream2_container::alloc()
                 const unsigned int rest = (unsigned int)after_cpu % (unsigned int)pdef->gpu_align;
                 prim->gpu_data = after_cpu + (rest == 0 ? 0 : pdef->gpu_align - rest);
             }
+        }
+        if (big != nullptr && carved == 0)
+        {
+            scaling_big_free(big); // scaling: nothing placed in it (freed by its start)
         }
         return true;
     }
@@ -893,8 +950,8 @@ bool stream2_container::alloc()
     }
     else
     {
-        // scaling (OpenRFG64-memtest): in 64 bits; a container past 2 GB (a big map's ns_base, level memory) takes the
-        // level allocator's unsigned path, the rest the game's.
+        // scaling (OpenRFG64-memtest): in 64 bits; a container past 2 GB (a big map's ns_base) gets a block of the "big
+        // containers" region of any size (stream2_dynamic_allocator::alloc_wide), the rest the game's path.
         unsigned long long cpu_wide = 0;
         unsigned long long gpu_wide = 0;
         calc_container_requirements_wide(cpu_wide, cpu_align, gpu_wide, gpu_align);
@@ -903,12 +960,12 @@ bool stream2_container::alloc()
         if (cpu_bytes < 0 || gpu_bytes < 0)
         {
             stream2_dynamic_allocator* const level = dynamic_cast<stream2_dynamic_allocator*>(cdef->allocator);
-            if (level == nullptr || gpu_bytes != 0 || cpu_wide > 0xFFFFFFFFull)
+            if (level == nullptr || gpu_bytes != 0)
             {
                 keen::debug::nativePrintArgs("[Stream2] <alloc> container %s: %llu + %llu bytes, past what its allocator takes\n", name, cpu_wide, gpu_wide);
                 return false;
             }
-            level->alloc_wide((unsigned int)cpu_wide, cpu_align, cpu_allocated, name);
+            level->alloc_wide(cpu_wide, cpu_align, cpu_allocated, name);
             if (cpu_allocated == nullptr)
             {
                 return false;
@@ -941,8 +998,8 @@ bool stream2_container::alloc()
         return false;
     }
 
-    unsigned int cpu_offset = 0; // scaling: past 2 GB (an int in the game)
-    unsigned int gpu_offset = 0;
+    unsigned long long cpu_offset = 0; // scaling: past 2 GB (an int in the game), and past 4 GB
+    unsigned long long gpu_offset = 0;
     int audio_offset = 0;
     for (int i = 0; i < num_entries; i++)
     {
@@ -963,12 +1020,12 @@ bool stream2_container::alloc()
             return false;
         }
         const stream2_prim_def* const pdef = prim->pdef;
-        cpu_offset = (unsigned int)align_up_wide(cpu_offset, pdef->cpu_align);
+        cpu_offset = align_up_wide(cpu_offset, pdef->cpu_align);
         prim->cpu_data = cpu_allocated + cpu_offset;
         cpu_offset += (unsigned int)prim->cpu_size;
         if (shouldPrimUseGPU(prim))
         {
-            gpu_offset = (unsigned int)align_up_wide(gpu_offset, pdef->gpu_align);
+            gpu_offset = align_up_wide(gpu_offset, pdef->gpu_align);
             prim->gpu_data = gpu_allocated + gpu_offset;
             gpu_offset += (unsigned int)prim->gpu_size;
         }
@@ -978,7 +1035,7 @@ bool stream2_container::alloc()
         }
         else
         {
-            cpu_offset = (unsigned int)align_up_wide(cpu_offset, pdef->gpu_align);
+            cpu_offset = align_up_wide(cpu_offset, pdef->gpu_align);
             prim->gpu_data = cpu_allocated + cpu_offset;
             cpu_offset += (unsigned int)prim->gpu_size;
         }

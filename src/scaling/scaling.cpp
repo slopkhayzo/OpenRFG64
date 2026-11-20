@@ -210,6 +210,146 @@ bool scaling_find(const char* name, void** base, size_t* size)
     return false;
 }
 
+// ---- the "big containers" region: a few blocks, first fit, each committed whole at its alloc and given back at its free
+namespace
+{
+    struct big_block
+    {
+        unsigned long long offset;
+        unsigned long long size;
+        unsigned int parts; // primitives carved from it (scaling_big_parts); 0: one block freed by its start
+        char name[48];
+    };
+    const int Max_big_blocks = 16;
+    big_block Big_blocks[Max_big_blocks]; // by offset
+    int Big_count;
+    SRWLOCK Big_lock = SRWLOCK_INIT;
+
+    bool big_region(char** base, unsigned long long* size)
+    {
+        static char* Base = nullptr;
+        static unsigned long long Size = 0;
+        if (Base == nullptr)
+        {
+            void* b = nullptr;
+            size_t s = 0;
+            if (!scaling_find("big containers", &b, &s))
+            {
+                return false;
+            }
+            Size = s;
+            Base = (char*)b;
+        }
+        *base = Base;
+        *size = Size;
+        return true;
+    }
+}
+
+void* scaling_big_alloc(unsigned long long bytes, unsigned int align, const char* name)
+{
+    char* base = nullptr;
+    unsigned long long size = 0;
+    if (bytes == 0 || !big_region(&base, &size))
+    {
+        return nullptr;
+    }
+    const unsigned long long a = align > Granule ? align : Granule;
+    const unsigned long long need = (bytes + Granule - 1) / Granule * Granule;
+    void* result = nullptr;
+    AcquireSRWLockExclusive(&Big_lock);
+    if (Big_count < Max_big_blocks && need <= size)
+    {
+        // The highest gap that holds it, at that gap's top (the region's top lies next to Havok's heap).
+        for (int k = Big_count; k >= 0; k--)
+        {
+            const unsigned long long gap_start = k > 0 ? Big_blocks[k - 1].offset + Big_blocks[k - 1].size : 0;
+            const unsigned long long gap_end = k < Big_count ? Big_blocks[k].offset : size;
+            if (gap_end < need)
+            {
+                continue;
+            }
+            const unsigned long long at = (gap_end - need) / a * a;
+            if (at >= gap_start)
+            {
+                if (scaling_commit(base + at, (size_t)need))
+                {
+                    for (int j = Big_count; j > k; j--)
+                    {
+                        Big_blocks[j] = Big_blocks[j - 1];
+                    }
+                    Big_blocks[k].offset = at;
+                    Big_blocks[k].size = need;
+                    Big_blocks[k].parts = 0;
+                    strncpy_s(Big_blocks[k].name, name != nullptr ? name : "-", _TRUNCATE);
+                    Big_count++;
+                    result = base + at;
+                }
+                else
+                {
+                    scaling_reset(base + at, (size_t)need); // what was committed of it goes back
+                }
+                break;
+            }
+        }
+    }
+    ReleaseSRWLockExclusive(&Big_lock);
+    return result;
+}
+
+bool scaling_big_free(void* p)
+{
+    char* base = nullptr;
+    unsigned long long size = 0;
+    if (p == nullptr || !big_region(&base, &size) || (char*)p < base || (char*)p >= base + size)
+    {
+        return false;
+    }
+    AcquireSRWLockExclusive(&Big_lock);
+    for (int k = 0; k < Big_count; k++)
+    {
+        char* const start = base + Big_blocks[k].offset;
+        if ((char*)p < start || (char*)p >= start + Big_blocks[k].size)
+        {
+            continue;
+        }
+        // A block of parts goes with its last part; a whole block, by its start only.
+        const bool last = Big_blocks[k].parts > 0 ? --Big_blocks[k].parts == 0 : (char*)p == start;
+        if (last)
+        {
+            scaling_reset(start, (size_t)Big_blocks[k].size);
+            for (int j = k; j + 1 < Big_count; j++)
+            {
+                Big_blocks[j] = Big_blocks[j + 1];
+            }
+            Big_count--;
+        }
+        break;
+    }
+    ReleaseSRWLockExclusive(&Big_lock);
+    return true; // in the region: never one of the level allocator's
+}
+
+void scaling_big_parts(void* block, int delta)
+{
+    char* base = nullptr;
+    unsigned long long size = 0;
+    if (block == nullptr || !big_region(&base, &size))
+    {
+        return;
+    }
+    AcquireSRWLockExclusive(&Big_lock);
+    for (int k = 0; k < Big_count; k++)
+    {
+        if (base + Big_blocks[k].offset == (char*)block)
+        {
+            Big_blocks[k].parts = (unsigned int)((int)Big_blocks[k].parts + delta);
+            break;
+        }
+    }
+    ReleaseSRWLockExclusive(&Big_lock);
+}
+
 bool scaling_commit(const void* p, size_t size)
 {
     if (size == 0)

@@ -17,6 +17,8 @@
 
 #include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRA
 #include "volition/stream2/code/stream2_allocator.h"
+#include "scaling/scaling.h" // scaling: scaling_big_alloc / scaling_big_free
+#include "keen/base/trace.hpp" // scaling: alloc_wide's lines
 
 #include "volition/vlib/code/memory/split_memmgr.h"
 #include "volition/vlib/code/memory/split_mempool.h"
@@ -176,17 +178,31 @@ void stream2_dynamic_allocator::alloc(int cpu_bytes, int cpu_align, unsigned cha
     frag_fail = true;
 }
 
-// scaling (OpenRFG64-memtest, new): stream2_container::allocate's path for a container past 2 GB: its cpu block in
-// level memory, sized in unsigned 32 bits (split_memmgr's).
-void stream2_dynamic_allocator::alloc_wide(unsigned int cpu_bytes, int cpu_align, unsigned char*& cpu_alloc, const char* debug_name)
+// scaling (OpenRFG64-memtest, new): stream2_container::allocate's path for a container past 2 GB: its cpu block in the
+// "big containers" region, of any size (scaling_big_alloc; free below gives it back), else in level memory as long as
+// split_memmgr's unsigned 32 bits hold it.
+void stream2_dynamic_allocator::alloc_wide(unsigned long long cpu_bytes, int cpu_align, unsigned char*& cpu_alloc, const char* debug_name)
 {
-    cpu_alloc = nullptr;
-    if (cpu_bytes > cpu_memmgr->space_free() || cpu_bytes > cpu_memmgr->largest_allocation_possible())
+    cpu_alloc = (unsigned char*)scaling_big_alloc(cpu_bytes, (unsigned int)cpu_align, debug_name);
+    if (cpu_alloc != nullptr)
     {
+        keen::debug::nativePrintArgs("[Stream2] <alloc_wide> %s: %llu bytes in the big containers region at %p\n", debug_name, cpu_bytes, cpu_alloc);
+        return;
+    }
+    void* region = nullptr;
+    size_t region_size = 0;
+    const bool have_region = scaling_find("big containers", &region, &region_size);
+    if (cpu_bytes > 0xFFFFFFFFull || (unsigned int)cpu_bytes > cpu_memmgr->space_free() ||
+        (unsigned int)cpu_bytes > cpu_memmgr->largest_allocation_possible())
+    {
+        keen::debug::nativePrintArgs("[Stream2] <alloc_wide> %s: %llu bytes: no block (big containers region %s, %llu bytes; level memory too small)\n",
+                                     debug_name, cpu_bytes, have_region ? "there" : "missing", (unsigned long long)region_size);
         frag_fail = true;
         return;
     }
-    cpu_alloc = (unsigned char*)cpu_memmgr->alloc(cpu_bytes, debug_name, (unsigned int)cpu_align);
+    cpu_alloc = (unsigned char*)cpu_memmgr->alloc((unsigned int)cpu_bytes, debug_name, (unsigned int)cpu_align);
+    keen::debug::nativePrintArgs("[Stream2] <alloc_wide> %s: %llu bytes in level memory at %p (big containers region %s)\n",
+                                 debug_name, cpu_bytes, cpu_alloc, have_region ? "there" : "missing");
     if (cpu_alloc == nullptr)
     {
         frag_fail = true;
@@ -202,12 +218,20 @@ unsigned char* stream2_dynamic_allocator::alloc(int bytes, int align, const char
 // 0x004AA160 (:185)
 void stream2_dynamic_allocator::free(unsigned char* data)
 {
+    if (scaling_big_free(data)) // scaling: a block of a container past 2 GB (alloc_wide)
+    {
+        return;
+    }
     cpu_memmgr->free(data);
 }
 
 // 0x004AA130 (:173)
 void stream2_dynamic_allocator::free(unsigned char* cpu_data, unsigned char* gpu_data)
 {
+    if (scaling_big_free(cpu_data)) // scaling: a block of a container past 2 GB (alloc_wide); never with gpu data
+    {
+        return;
+    }
     cpu_memmgr->free(cpu_data);
     if (gpu_data != nullptr)
     {

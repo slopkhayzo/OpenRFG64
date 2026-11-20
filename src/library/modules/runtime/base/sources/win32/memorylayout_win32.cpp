@@ -90,14 +90,35 @@ namespace keen
                 // committed as it is used. Havok's heap gets the 2 GB just below it in the same reservation: the level's
                 // data links to Havok's shapes with self-relative 32-bit offsets, and pages taken anywhere put them more
                 // than 2 GB away (OpenRFG64's far-offset table then took 117,000 entries per load, and it never frees any).
+                // Below Havok's heap, 32 GB of "big containers": a stream2 container past 2 GB (a big map's World
+                // container) gets a block there (scaling_big_alloc, from the region's top, next to Havok's heap), not in
+                // level memory, which stays right above Havok's heap for every other container (the campaign's streamed
+                // cells keep their links to Havok's shapes near).
                 uint8* pStart = nullptr;
                 if (i == 6u && scaling_enabled())
                 {
                     const SIZE_T havok_bytes = 0x80000000u;
-                    uint8* const both = (uint8*)VirtualAlloc(nullptr, havok_bytes + size, MEM_RESERVE, PAGE_READWRITE);
-                    if (both != nullptr && scaling_adopt("Havok heap", both, havok_bytes) != nullptr)
+                    const SIZE_T big_bytes = (SIZE_T)0x800000000ull;
+                    uint8* const all = (uint8*)VirtualAlloc(nullptr, big_bytes + havok_bytes + size, MEM_RESERVE, PAGE_READWRITE);
+                    if (all != nullptr)
                     {
-                        pStart = (uint8*)scaling_adopt("level memory", both + havok_bytes, size);
+                        if (scaling_adopt("Havok heap", all + big_bytes, havok_bytes) != nullptr)
+                        {
+                            // Without this region a container past 2 GB takes level memory, as before (up to 4 GB).
+                            const bool big = scaling_adopt("big containers", all, big_bytes) != nullptr;
+                            pStart = (uint8*)scaling_adopt("level memory", all + big_bytes + havok_bytes, size);
+                            debug::nativePrintArgs("[scaling] big containers %s at %p, Havok's heap at %p, level memory at %p\n",
+                                                   big ? "registered" : "NOT registered", all, all + big_bytes, pStart);
+                        }
+                    }
+                    else
+                    {
+                        // As before, without the big containers.
+                        uint8* const both = (uint8*)VirtualAlloc(nullptr, havok_bytes + size, MEM_RESERVE, PAGE_READWRITE);
+                        if (both != nullptr && scaling_adopt("Havok heap", both, havok_bytes) != nullptr)
+                        {
+                            pStart = (uint8*)scaling_adopt("level memory", both + havok_bytes, size);
+                        }
                     }
                 }
                 if (pStart == nullptr)
