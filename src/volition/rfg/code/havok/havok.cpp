@@ -118,7 +118,11 @@
 #include <intrin.h>
 #include <math.h>
 
-static const int MAX_COLLISION_MODELS = 0x7FFF; // 32767 collision model table entries
+static const int MAX_COLLISION_MODELS = 0x7FFF; // 32767 collision model table entries (the game's table)
+// scaling (OpenRFG64-memtest): with grow-on-demand memory the table is a region of this many entries, committed as
+// indices are handed out (havok_cm_manager.cpp); the chunks' 16-bit fields keep the larger ones in a side table
+// (rfg_chunk_shared.cpp).
+static const unsigned int Collision_models_scaled = 1u << 22;
 static const unsigned int MAX_RIGID_BODIES = 0x100000; // 2^20 rigid body handles (wrap mask 0xFFFFF)
 static const unsigned int HAVOK_SDK_VERSION_NUMBER = 20140205; // 0x13350AD, Havok 2014.2.5
 
@@ -212,7 +216,9 @@ static GeneralCollisionListener Collision_listener; // 0x0165FF60
 static game_post_collide_listener Post_collide_listener; // 0x0165FF64
 static game_post_simulation_listener Post_simulation_listener; // 0x0165FF68
 static game_constraint_listener Constraint_listener; // 0x0165FF6C
-static const hkpShape* Collision_models[MAX_COLLISION_MODELS]; // 0x02643070
+static const hkpShape* Collision_models_fixed[MAX_COLLISION_MODELS]; // 0x02643070 (Collision_models in rfg.exe)
+static const hkpShape** Collision_models = Collision_models_fixed; // scaling: or the grow-on-demand region
+static unsigned int Max_collision_models = MAX_COLLISION_MODELS;   // scaling: the table's entries
 static cm_to_replace Collision_models_to_replace[100]; // 0x02663078
 static rfg_object_broadphase* Rfg_broadphase; // 0x02666058
 static bool Hk_rigid_body_slot_used[MAX_RIGID_BODIES]; // 0x02667818
@@ -2491,6 +2497,10 @@ unsigned int havok_body_create(physics_create_info& pci)
         case HAVOK_SHAPE_TYPE_WORLD:
         case HAVOK_SHAPE_TYPE_NAVMESH:
             cinfo.m_shape = havok_cm_manager_get(pci.cm_index);
+            if (cinfo.m_shape == nullptr)
+            {
+                openrfg_cm_miss(pci.cm_index); // memtest: an index that names no model
+            }
             break;
         case HAVOK_SHAPE_TYPE_DESTROYABLE:
         case HAVOK_SHAPE_TYPE_VEHICLE:
@@ -4170,11 +4180,8 @@ int havok_collect_objects_in_capsule(const vector& pos, const float& radius, con
 static const hkMoppBvTreeShapeBase* get_zone_navmesh_tree(const obj_zone* zone, bool vehicle_pfg)
 {
     unsigned int cm_index = vehicle_pfg ? zone->zone_pfg.vehicle_pfg_shape : zone->zone_pfg.pfg_shape;
-    if (cm_index >= 0x7FFF)
-    {
-        return nullptr;
-    }
-    const hkpShape* shape = Collision_models[cm_index];
+    // scaling (OpenRFG64-memtest): the table's size, not 0x7FFF (havok_cm_manager_get checks it)
+    const hkpShape* shape = havok_cm_manager_get(cm_index);
     if (shape == nullptr || shape->m_type.m_storage != 9)
     {
         return nullptr;

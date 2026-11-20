@@ -53,6 +53,8 @@
 #include "volition/vlib/code/os/cs_wrapper.h"
 #include "volition/vlib/code/os/frametime.h"
 
+unsigned int chunk_cm_index(const unsigned short& field); // scaling: rfg_chunk_shared.cpp
+
 #include "keen/base/trace.hpp"
 
 #include <math.h>
@@ -231,7 +233,7 @@ void rfg_base_destroyable_shape::init_subpiece_shapes()
     rfg_subpiece_base_extra_data* extra = base_extra_data.to_pointer();
     for (int i = 0; i < num_objects; i++)
     {
-        const hkpShape* model = havok_cm_manager_get(extra[i].collision_model);
+        const hkpShape* model = havok_cm_manager_get(chunk_cm_index(extra[i].collision_model)); // scaling: past 16 bits
         extra[i].shape.from_pointer((hkpShape*)model);
         if ((hkpShape*)extra[i].shape == nullptr)
         {

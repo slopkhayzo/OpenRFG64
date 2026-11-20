@@ -42,8 +42,11 @@
 #include "volition/vlib/code/math/vector3.h"
 
 #include "keen/base/trace.hpp"
+#include "scaling/scaling.h" // scaling
 
 #include <math.h>
+#include <stdlib.h>
+#include <vector>
 
 // The Havok product configuration: the game's feature list, then the SDK's hkproductfeatures.cxx, which defines
 // hkProductFeatures::initialize in this file (0x00819910, between havok_bp.cpp and this file's functions).
@@ -55,7 +58,39 @@
 
 // ---- file statics (Num_collision_models, Collision_models, Allow_default_cm_removal and MAX_COLLISION_MODELS are
 // havok.cpp's, earlier in the unity file)
-static unsigned int Collision_models_free_list[MAX_COLLISION_MODELS]; // 0x02622728
+// The free indices. rfg.exe keeps a stack of all of them (Collision_models_free_list, 0x02622728, filled with 0, 1, 2,
+// ... at init; a removed index goes back on top). scaling (OpenRFG64-memtest): the same order with nothing to fill:
+// the indices given back (Cm_freed, the last first), then the ones never handed out (Cm_next_fresh on). The table may
+// then be a region of millions of entries, committed only where indices were handed out.
+static std::vector<unsigned int> Cm_freed;
+static unsigned int Cm_next_fresh;
+static unsigned int Cm_peak; // the most in use at once
+
+// The next free index (0xFFFFFFFF: the table is full); its entry is committed.
+static unsigned int cm_take_index()
+{
+    if (!Cm_freed.empty())
+    {
+        const unsigned int index = Cm_freed.back();
+        Cm_freed.pop_back();
+        return index;
+    }
+    // 0xFFFE and 0xFFFF are the chunks' 16-bit "kept apart" and "none" (a none field reaches havok_cm_manager_get as
+    // 0xFFFF, which must stay empty): never models.
+    if (Cm_next_fresh == 0xFFFE)
+    {
+        Cm_next_fresh = 0x10000;
+    }
+    if (Cm_next_fresh >= Max_collision_models)
+    {
+        return 0xFFFFFFFF;
+    }
+    if (Collision_models != Collision_models_fixed && !scaling_commit(&Collision_models[Cm_next_fresh], sizeof(*Collision_models)))
+    {
+        return 0xFFFFFFFF;
+    }
+    return Cm_next_fresh++;
+}
 
 // 0x0080F2C0 (:170)
 // LTCG: rotation in ECX, translation in EAX; not called by the functions implemented here (havok_cm_manager_create_box_shape
@@ -70,15 +105,22 @@ static bool is_identity(const quaternion& rotation, const vector& translation, f
 void havok_cm_manager_init()
 {
     hkFeature_serializeDeprecatedPre700();
+    // scaling (OpenRFG64-memtest): the table becomes a grow-on-demand region (once; it stays for the session).
+    if (Collision_models == Collision_models_fixed && scaling_enabled())
+    {
+        if (void* region = scaling_reserve("collision models", (size_t)Collision_models_scaled * sizeof(*Collision_models), 0))
+        {
+            Collision_models = (const hkpShape**)region;
+            Max_collision_models = Collision_models_scaled;
+        }
+    }
     Num_collision_models = 0;
-    for (int i = 0; i < MAX_COLLISION_MODELS; i++)
+    for (unsigned int i = 0; i < Cm_next_fresh; i++)
     {
         Collision_models[i] = nullptr;
     }
-    for (unsigned int i = 0; i < (unsigned int)MAX_COLLISION_MODELS; i++)
-    {
-        Collision_models_free_list[i] = i;
-    }
+    Cm_freed.clear();
+    Cm_next_fresh = 0;
 
     // The default collision model (index 0): a 1 m box standing on the origin.
     vector position(0.0f, 0.5f, 0.0f);
@@ -88,7 +130,7 @@ void havok_cm_manager_init()
     if (default_model != nullptr)
     {
         // havok_cm_manager_add, inlined
-        if (Num_collision_models >= MAX_COLLISION_MODELS)
+        if ((unsigned int)Num_collision_models >= Max_collision_models)
         {
             keen::debug::nativePrintArgs("havok_cm_manager_add: Too many collision models already exist, increase MAX_COLLISION_MODELS!\n");
         }
@@ -98,16 +140,26 @@ void havok_cm_manager_init()
         }
         else
         {
-            const unsigned int index = Collision_models_free_list[Num_collision_models];
-            if (index < (unsigned int)MAX_COLLISION_MODELS)
+            const unsigned int index = cm_take_index();
+            if (index < Max_collision_models)
             {
-                Collision_models_free_list[Num_collision_models] = 0xFFFFFFFF;
                 Num_collision_models++;
                 Collision_models[index] = default_model;
             }
         }
     }
     Allow_default_cm_removal = false;
+    // scaling test (OPENRFG_TEST_CM_FIRST=N): indices are handed out from N on, so that a map that needs few takes
+    // the paths of a table past 32,767 and past 16 bits (the chunks' side table).
+    if (Collision_models != Collision_models_fixed)
+    {
+        const char* first = getenv("OPENRFG_TEST_CM_FIRST");
+        const unsigned int n = first != nullptr ? (unsigned int)strtoul(first, nullptr, 10) : 0;
+        if (n > Cm_next_fresh && n < Max_collision_models / 2)
+        {
+            Cm_next_fresh = n;
+        }
+    }
 }
 
 // 0x00824000 (:472)
@@ -120,7 +172,7 @@ void havok_cm_manager_shutdown()
         Collision_models[0]->removeReference();
         Num_collision_models--;
         Collision_models[0] = nullptr;
-        Collision_models_free_list[Num_collision_models] = 0;
+        Cm_freed.push_back(0);
     }
 }
 
@@ -200,7 +252,7 @@ bool havok_cm_manager_load_all(unsigned int* cm_chunk_size, const void* source_b
 // 0x0080F3C0 (:626)
 const hkpShape* havok_cm_manager_get(unsigned int cm_index)
 {
-    if (cm_index >= (unsigned int)MAX_COLLISION_MODELS)
+    if (cm_index >= Cm_next_fresh) // scaling: the indices handed out so far (MAX_COLLISION_MODELS in rfg.exe)
     {
         return nullptr;
     }
@@ -214,7 +266,7 @@ unsigned int havok_cm_manager_add(const hkpShape* collision_model)
     {
         return 0;
     }
-    if (Num_collision_models >= MAX_COLLISION_MODELS)
+    if ((unsigned int)Num_collision_models >= Max_collision_models)
     {
         keen::debug::nativePrintArgs("havok_cm_manager_add: Too many collision models already exist, increase MAX_COLLISION_MODELS!\n");
         return 0;
@@ -224,14 +276,17 @@ unsigned int havok_cm_manager_add(const hkpShape* collision_model)
         keen::debug::nativePrintArgs("havok_cm_manager_add: Trying to add a collision model before the system has been initialized... bad");
         return 0;
     }
-    const unsigned int index = Collision_models_free_list[Num_collision_models];
-    if (index >= (unsigned int)MAX_COLLISION_MODELS)
+    const unsigned int index = cm_take_index();
+    if (index >= Max_collision_models)
     {
         return 0xFFFFFFFF;
     }
-    Collision_models_free_list[Num_collision_models] = 0xFFFFFFFF;
     Collision_models[index] = collision_model;
     Num_collision_models++;
+    if ((unsigned int)Num_collision_models > Cm_peak)
+    {
+        Cm_peak = (unsigned int)Num_collision_models;
+    }
     return index;
 }
 
@@ -244,26 +299,26 @@ unsigned int havok_cm_manager_get_count()
 // 0x008199E0 (:697)
 void havok_cm_manager_remove_from_list(unsigned int cm_index)
 {
-    if (cm_index < (unsigned int)MAX_COLLISION_MODELS && Collision_models[cm_index] != nullptr)
+    if (cm_index < Cm_next_fresh && Collision_models[cm_index] != nullptr)
     {
         Collision_models[cm_index]->removeReference();
         Num_collision_models--;
         Collision_models[cm_index] = nullptr;
-        Collision_models_free_list[Num_collision_models] = cm_index;
+        Cm_freed.push_back(cm_index);
     }
 }
 
 // 0x00819A20 (:729)
 void havok_cm_manager_remove_all()
 {
-    for (unsigned int i = 0; (int)i < MAX_COLLISION_MODELS; i++)
+    for (unsigned int i = 0; i < Cm_next_fresh; i++)
     {
         if (Collision_models[i] != nullptr && i != 0xFFFFFFFF)
         {
             Collision_models[i]->removeReference();
             Num_collision_models--;
             Collision_models[i] = nullptr;
-            Collision_models_free_list[Num_collision_models] = i;
+            Cm_freed.push_back(i);
         }
     }
 }
@@ -385,8 +440,9 @@ hkpShape* havok_cm_manager_create_cylinder_shape(const vector* endA, const vecto
     return new hkpCylinderShape(a, b, radius, hkConvexShapeDefaultRadius);
 }
 
-// memtest (new, OpenRFG64-memtest src/memtest): the collision model table's fill for the census (32,767 entries,
-// indexed in 16-bit fields of the chunks' data: the first wall of big maps in every build, 64-bit included).
+// memtest (new, OpenRFG64-memtest src/memtest): the collision model table's fill for the census (the game's 32,767
+// entries, indexed in 16-bit fields of the chunks' data: the first wall of big maps in every build, 64-bit included;
+// with grow-on-demand memory 4,194,304, the chunks' larger indices in a side table).
 int openrfg_num_collision_models()
 {
     return Num_collision_models;
@@ -394,5 +450,35 @@ int openrfg_num_collision_models()
 
 int openrfg_max_collision_models()
 {
-    return MAX_COLLISION_MODELS;
+    return (int)Max_collision_models;
+}
+
+unsigned int openrfg_collision_models_high_water()
+{
+    return Cm_next_fresh;
+}
+
+static volatile long Cm_misses;
+static unsigned int Cm_first_miss = 0xFFFFFFFF;
+
+void openrfg_cm_miss(unsigned int cm_index)
+{
+    if (_InterlockedIncrement(&Cm_misses) == 1)
+    {
+        Cm_first_miss = cm_index;
+    }
+}
+
+unsigned int openrfg_cm_misses(unsigned int* first_index)
+{
+    if (first_index != nullptr)
+    {
+        *first_index = Cm_first_miss;
+    }
+    return (unsigned int)Cm_misses;
+}
+
+unsigned int openrfg_collision_models_peak()
+{
+    return Cm_peak;
 }

@@ -18,6 +18,8 @@ bool havok_cm_manager_load_all(unsigned int* cm_chunk_size, const void* source_b
 const hkpShape* havok_cm_manager_get(unsigned int cm_index); // 0x0080F3C0 (:626)
 unsigned int havok_cm_manager_add(const hkpShape* collision_model); // 0x0080F3E0 (:643)
 unsigned int havok_cm_manager_get_count(); // 0x0080F450 (:688)
+void openrfg_cm_miss(unsigned int cm_index); // memtest (new): a body asked for a model that is not in the table
+unsigned int openrfg_cm_misses(unsigned int* first_index); // memtest: how many, and the first index
 void havok_cm_manager_remove_from_list(unsigned int cm_index); // 0x008199E0 (:697)
 void havok_cm_manager_remove_all(); // 0x00819A20 (:729)
 hkpShape* havok_cm_manager_create_box_shape(const quaternion* q_rotation, const vector* position, const vector* half_extents); // 0x00832750 (:750)

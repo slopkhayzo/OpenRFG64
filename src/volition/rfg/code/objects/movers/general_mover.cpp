@@ -743,7 +743,7 @@ bool general_mover::stream(bool load)
         const rfg_subpiece_base* sp_base = &shape_base->base_objects.to_pointer()[subpiece_index];
         const rfg_subpiece_base_extra_data* extra = &shape_base->base_extra_data.to_pointer()[subpiece_index];
         const rfg_physical_material* material = rfg_get_physical_material_by_index(sp_base->physical_material_index);
-        pci.cm_index = extra->collision_model;
+        pci.cm_index = chunk_cm_index(extra->collision_model); // scaling: past 16 bits
         matrix local_orient;
         shape_base->get_subpiece_orient_local(sp_base, local_orient);
         pci.mass = sp_base->mass;
@@ -788,7 +788,7 @@ bool general_mover::stream(bool load)
             return false;
         }
         general_object_base* obj_base = &chunk->general_objects.to_pointer()[gobj_index];
-        pci.cm_index = obj_base->collision_models[0];
+        pci.cm_index = chunk_cm_index(obj_base->collision_models[0]); // scaling: past 16 bits
         data->model_instance_p = build_new_rl_instance_from_object_base(obj_base, chunk);
         if (data->model_instance_p == nullptr)
         {
@@ -927,7 +927,7 @@ void general_mover::do_frame_pre_sim()
         if (objects != nullptr)
         {
             const general_object_base* obj_base = &objects[gobj_index];
-            const unsigned short corpse_model = obj_base->collision_models[1];
+            const unsigned int corpse_model = chunk_cm_index(obj_base->collision_models[1]); // scaling: past 16 bits (0xFFFF: none)
             if (corpse_model == 0xFFFF || (mover_flags & 0x4) != 0)
             {
                 if (!Multiplayer || multi_is_server())
@@ -943,7 +943,7 @@ void general_mover::do_frame_pre_sim()
             {
                 gm_flags |= 0x200; // the corpse mesh is set up by update_render
                 update_pos_and_orient(pos, orient, true);
-                if (obj_base->collision_models[0] != obj_base->collision_models[1])
+                if (chunk_cm_index(obj_base->collision_models[0]) != corpse_model)
                 {
                     havok_body_replace_collision_model(havok_handle, corpse_model);
                 }

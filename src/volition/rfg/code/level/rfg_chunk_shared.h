@@ -185,6 +185,11 @@ void chunk_level_shutdown(); // 0x0091A270 (:904)
 bool chunk_base_load(const char* filename, unsigned int srid, unsigned char* cpu_data, int cpu_data_size, unsigned char* gpu_data, int gpu_data_size); // 0x00936860 (:920)
 void chunk_base_unload(const char* filename, unsigned int srid); // 0x00930960 (:964)
 c_chunk_base* chunk_get_base_by_uid(unsigned int uid); // 0x009216F0 (:1058)
+// scaling (OpenRFG64-memtest, new): the collision model index a chunk's 16-bit field stands for (a general object's
+// collision_models[], a destroyable piece's collision_model): the field itself, or, for an index that does not fit
+// in 16 bits, the one kept for it (the field holds 0xFFFE then). 0xFFFF: none, as in the field.
+unsigned int chunk_cm_index(const unsigned short& field);
+int openrfg_chunk_cm_side_entries(); // memtest: the indices kept apart now
 unsigned int chunk_get_base_uid(const c_chunk_base* chunk_base); // 0x00921740 (:1075)
 int chunk_get_general_object_index(const c_chunk_base* chunk, unsigned int uid, object* objp); // 0x00921780 (:1084)
 rfg_base_destroyable_shape* chunk_get_destroyable_object(const c_chunk_base* chunk, unsigned int uid, object* objp); // 0x00928880 (:1120)

@@ -70,6 +70,9 @@ int memtest_wc_map_additions(const memtest_wc_map_addition** additions);
 // ---- accessors added to recovered files (their statics)
 int openrfg_num_collision_models();                                    // havok_cm_manager.cpp
 int openrfg_max_collision_models();
+unsigned int openrfg_collision_models_high_water();                   // the indices handed out so far
+int openrfg_chunk_cm_side_entries();                                  // rfg_chunk_shared.cpp: indices past 16 bits
+unsigned int openrfg_cm_misses(unsigned int* first_index);            // havok_cm_manager.cpp: bodies asked for no model
 int openrfg_general_movers_in_use();                                   // general_mover.cpp
 int openrfg_general_movers_capacity();
 void openrfg_main_menu_select(int choice);                             // main_menu.cpp: main_menu_handle_selection

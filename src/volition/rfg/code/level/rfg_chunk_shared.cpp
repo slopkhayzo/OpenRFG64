@@ -34,6 +34,9 @@
 #include "volition/stream2/code/stream2_container.h"
 #include "volition/vlib/code/cfile/cfile.h"
 #include "volition/vlib/code/memory/object_pool.h"
+
+#include <unordered_map>
+#include <windows.h>
 #include "volition/vlib/code/memory/rfg_split_mempool.h"
 #include "volition/vlib/code/memory/virtual_mempool.h"
 #include "volition/vlib/code/os/vconsole.h"
@@ -120,6 +123,60 @@ static void chunk_delete_renderlib_mesh(c_chunk_base* pchunk)
     pchunk->material_map_p.to_pointer()->release();
 }
 
+// ---- scaling (OpenRFG64-memtest, new): collision model indices past 16 bits
+// The chunk's data keeps its pieces' collision models in 16-bit fields (general_object_base::collision_models,
+// rfg_subpiece_base_extra_data::collision_model), the file's model numbers replaced by table indices at load. With the
+// table past 65,533 entries (havok_cm_manager.cpp) such an index is kept here, by the field's address, and the field
+// holds Cm_side. The readers ask chunk_cm_index. Loads and unloads may run apart from the readers: a lock.
+static const unsigned short Cm_side = 0xFFFE;
+static SRWLOCK Cm_side_lock = SRWLOCK_INIT;
+static std::unordered_map<const unsigned short*, unsigned int> Cm_side_table;
+
+static void cm_store(unsigned short& field, unsigned int index)
+{
+    if (index < Cm_side)
+    {
+        field = (unsigned short)index;
+        return;
+    }
+    AcquireSRWLockExclusive(&Cm_side_lock);
+    Cm_side_table[&field] = index;
+    ReleaseSRWLockExclusive(&Cm_side_lock);
+    field = Cm_side;
+}
+
+static void cm_forget(unsigned short& field)
+{
+    if (field == Cm_side)
+    {
+        AcquireSRWLockExclusive(&Cm_side_lock);
+        Cm_side_table.erase(&field);
+        ReleaseSRWLockExclusive(&Cm_side_lock);
+    }
+    field = 0xFFFF;
+}
+
+unsigned int chunk_cm_index(const unsigned short& field)
+{
+    if (field != Cm_side)
+    {
+        return field;
+    }
+    AcquireSRWLockShared(&Cm_side_lock);
+    const auto it = Cm_side_table.find(&field);
+    const unsigned int index = it != Cm_side_table.end() ? it->second : 0; // 0: the default model
+    ReleaseSRWLockShared(&Cm_side_lock);
+    return index;
+}
+
+int openrfg_chunk_cm_side_entries()
+{
+    AcquireSRWLockShared(&Cm_side_lock);
+    const int n = (int)Cm_side_table.size();
+    ReleaseSRWLockShared(&Cm_side_lock);
+    return n;
+}
+
 // 0x00928440 (:205)
 // Loads the chunk's collision models and replaces the model numbers in the general objects, the destroyables and the
 // mopp handle with cm indices.
@@ -137,16 +194,16 @@ static void chunk_load_collision_models(c_chunk_base* pchunk, unsigned char* dat
         general_object_base& go = general_objects[i];
         if (go.collision_models[0] != 0xFFFF)
         {
-            go.collision_models[0] = (unsigned short)handles[go.collision_models[0]];
+            cm_store(go.collision_models[0], handles[go.collision_models[0]]); // scaling: past 16 bits too
         }
         if (go.collision_models[1] != 0xFFFF)
         {
-            go.collision_models[1] = (unsigned short)handles[go.collision_models[1]];
+            cm_store(go.collision_models[1], handles[go.collision_models[1]]);
         }
         else if (go.collision_models[0] != 0xFFFF && go.mesh_subpieces[1] != -1)
         {
             // No second model: the second mesh subpiece uses the first one.
-            go.collision_models[1] = go.collision_models[0];
+            cm_store(go.collision_models[1], chunk_cm_index(go.collision_models[0]));
         }
     }
 
@@ -158,7 +215,7 @@ static void chunk_load_collision_models(c_chunk_base* pchunk, unsigned char* dat
         {
             if (extra[k].collision_model != 0xFFFF)
             {
-                extra[k].collision_model = (unsigned short)handles[extra[k].collision_model];
+                cm_store(extra[k].collision_model, handles[extra[k].collision_model]); // scaling: past 16 bits too
             }
         }
         shape->init_subpiece_shapes();
@@ -180,8 +237,8 @@ static void chunk_unload_collision_models(c_chunk_base* pchunk)
         {
             if (general_objects[i].collision_models[m] != 0xFFFF)
             {
-                havok_cm_manager_remove_from_list(general_objects[i].collision_models[m]);
-                general_objects[i].collision_models[m] = 0xFFFF;
+                havok_cm_manager_remove_from_list(chunk_cm_index(general_objects[i].collision_models[m]));
+                cm_forget(general_objects[i].collision_models[m]);
             }
         }
     }
@@ -193,8 +250,8 @@ static void chunk_unload_collision_models(c_chunk_base* pchunk)
         {
             if (extra[k].collision_model != 0xFFFF)
             {
-                havok_cm_manager_remove_from_list(extra[k].collision_model);
-                extra[k].collision_model = 0xFFFF;
+                havok_cm_manager_remove_from_list(chunk_cm_index(extra[k].collision_model));
+                cm_forget(extra[k].collision_model);
             }
         }
     }

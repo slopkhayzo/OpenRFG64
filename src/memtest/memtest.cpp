@@ -161,6 +161,8 @@ namespace
     volatile long Havok_oom = 0;
     volatile long Level_failures = 0;
     int Peak_cm_models = 0;
+    unsigned int Cm_high_water = 0; // scaling: the highest collision model index handed out, + 1
+    int Peak_cm_side = 0;           // scaling: the most indices kept past the chunks' 16 bits
     int Peak_movers = 0;
     int Peak_zone_handles = 0;
     int Peak_render;
@@ -709,6 +711,12 @@ namespace
         {
             Peak_cm_models = cm_models;
         }
+        Cm_high_water = openrfg_collision_models_high_water();
+        const int cm_side = openrfg_chunk_cm_side_entries();
+        if (cm_side > Peak_cm_side)
+        {
+            Peak_cm_side = cm_side;
+        }
         const int movers = openrfg_general_movers_in_use();
         if (movers > Peak_movers)
         {
@@ -1130,8 +1138,14 @@ namespace
         fprintf(f, "  level memory (block 6)  %10.1f of %.1f MB at the peak, %ld failed allocations%s%s\n", mb(Peak_level), mb(Level_size),
                 Level_failures, Level_first_failure[0] ? "; the first: " : "", Level_first_failure);
         fprintf(f, "  world objects           %10d of %d at the peak (indices are 16-bit: at most 65,535)\n", Peak_objects, Max_objects);
-        fprintf(f, "  collision model table   %10d of %d at the peak (16-bit indices in the chunks' data)\n", Peak_cm_models,
-                openrfg_max_collision_models());
+        fprintf(f, "  collision model table   %10d of %d at the peak; indices handed out up to %u, %d at most kept past the chunks' 16 bits\n",
+                Peak_cm_models, openrfg_max_collision_models(), Cm_high_water, Peak_cm_side);
+        unsigned int first_miss = 0;
+        const unsigned int cm_misses = openrfg_cm_misses(&first_miss);
+        if (cm_misses != 0)
+        {
+            fprintf(f, "  ** %u Havok bodies asked for a collision model that is not there (the first: index %u) **\n", cm_misses, first_miss);
+        }
         fprintf(f, "  debris (general movers) %10d of %d at the peak (the pool links its elements with 16-bit indices)\n", Peak_movers,
                 openrfg_general_movers_capacity());
         fprintf(f, "  zone object handles     %10d of 7280 at the peak in the fullest zone (a fixed bitmap per zone)\n", Peak_zone_handles);
