@@ -596,7 +596,11 @@ namespace keen
         void Application::fillGameframeworkParameters(GameFrameworkParameters* pParameters, const GameApplicationParameters&)
         {
             pParameters->pProjectName = "Red Faction Guerrilla Re-Mars-tered";
-            pParameters->fileSystemParameters.maxDeviceCount = 8;
+            // memtest: + 16 devices and mount points for the Sledge mods' files folders (src/memtest mounts up to 16,
+            // a device each). The game's 8 devices were full with one mod; with two, the shaders' memory-file mounts
+            // found none free: no shader loaded, and the graphics card hung at boot.
+            pParameters->fileSystemParameters.maxDeviceCount = 8 + 16;
+            pParameters->fileSystemParameters.maxMountPoints = 0x20 + 16;
             pParameters->fileSystemParameters.useReadThreads = true;
             pParameters->initializeSoundSystem = false;
             pParameters->maxTaskSystemWorkerThreads = 0;
@@ -647,7 +651,8 @@ namespace keen
                 pParameters->screenWidth = 960;
                 pParameters->screenHeight = 540;
             }
-            pParameters->fileSystemParameters.maxDeviceCount = 8;
+            pParameters->fileSystemParameters.maxDeviceCount = 8 + 16; // memtest: the Sledge mounts (above)
+            pParameters->fileSystemParameters.maxMountPoints = 0x20 + 16;
             // Magic number: 200 native streams.
             pParameters->fileSystemParameters.maxNativeStreamCount = 200;
             pParameters->fileSystemParameters.useReadThreads = false;

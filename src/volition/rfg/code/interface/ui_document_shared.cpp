@@ -7,6 +7,7 @@
 #include "volition/rfg/code/interface/ui_document_shared.h"
 
 #include "keen/base/trace.hpp"
+#include "memtest/memtest.h" // memtest: the Sledge mods' pictures
 #include "volition/interface_lib/code/vint_document.h"
 #include "volition/interface_lib/code/vint_project.h"
 #include "volition/rfg/code/gamewide/asset_assembler.h"
@@ -315,6 +316,18 @@ void ui_document_create_stream_image_containers(mempool_base* tmp_pool, mempool*
 {
     const bool is_dlc = dlc_id != -1;
     assasm_start(is_dlc ? "dlc_ui_images" : "ui_images", tmp_pool, (mempool_base*)pool, load_from_preload, nullptr, false, is_dlc, false, false);
+    // memtest (src/memtest): the Sledge mods' pictures (a Wrecking Crew map's image = "..."): the containers their
+    // *_ui_images.asm_pc declare, read like the game's ui_images.asm_pc; each <container>.str2_pc is a file of theirs.
+    if (!is_dlc && load_from_preload)
+    {
+        const char* asms[16];
+        const int count = memtest_sledge_ui_image_asms(asms, 16);
+        for (int i = 0; i < count; i++)
+        {
+            const bool read = stream2_read_container_data(asms[i], tmp_pool, (mempool_base*)pool, false, false, false);
+            memtest_event("sledge: %s %s", asms[i], read ? "read: its pictures are declared" : "could not be read");
+        }
+    }
     // Original: the name list's buffer (0x1200 bytes) and the prefixes are made for findStreamedFiles and not used.
     tmp_pool->alloc(0x1200, 0);
     char name[256];

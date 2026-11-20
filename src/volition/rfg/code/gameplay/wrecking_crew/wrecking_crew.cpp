@@ -42,6 +42,8 @@
 #include "volition/rfg/code/interface/ui_document_menu_wrecking_crew_scoreboard.h"
 #include "volition/rfg/code/interface/ui_menu.h"
 #include "volition/rfg/code/interface/ui_message_box.h"
+#include "volition/rfg/code/interface/localization/localization_shared.h" // memtest: a Sledge map's own name
+#include "keen/base/crc32.hpp" // memtest
 #include "volition/rfg/code/level/world.h"
 #include "volition/rfg/code/multi/multi_core/include/multi_core_platform.h"
 #include "volition/rfg/code/multi/multi_core/include/multi_player_uid.h"
@@ -164,7 +166,51 @@ static timestamp Wrecking_crew_restore_map_delay; // 0x01659F28
 timestamp_percent Wrecking_crew_timer; // 0x01659F2C
 farray<wc_game_character_info*, 50> Wrecking_crew_characters; // 0x01659F38
 static int Num_challenge_modes; // 0x02225818
-static wrecking_crew_map_info* Wrecking_crew_map_info[32]; // 0x02225820
+// OpenRFG64-memtest: 256 maps instead of 32 (the game's own fill 27, Sledge's custom maps the rest). Nothing else
+// keeps a table by map: the menu steps through them modulo their number.
+static const int Max_wrecking_crew_maps = 256;
+static wrecking_crew_map_info* Wrecking_crew_map_info[Max_wrecking_crew_maps]; // 0x02225820 (32)
+
+// memtest: Sledge maps with a name of their own (mod.lua's name = "..."): their key and text. The text is not in the
+// game's localization data, so it goes into its table when missing (as upstream's Ambient Range option does), again
+// if the table was loaded anew (a language change). text null: only that.
+struct memtest_named_map
+{
+    const char* key;
+    const wchar_t* text;
+};
+static memtest_named_map Memtest_named_maps[Max_wrecking_crew_maps];
+static int Memtest_named_map_count;
+
+static void memtest_map_name(const char* key, const wchar_t* text)
+{
+    if (key == nullptr || _strnicmp(key, "openrfg_map_", 12) != 0)
+    {
+        return;
+    }
+    int k = 0;
+    while (k < Memtest_named_map_count && Memtest_named_maps[k].key != key)
+    {
+        k++;
+    }
+    if (k == Memtest_named_map_count)
+    {
+        if (text == nullptr || k >= Max_wrecking_crew_maps)
+        {
+            return;
+        }
+        Memtest_named_maps[k].key = key;
+        Memtest_named_maps[k].text = text;
+        Memtest_named_map_count++;
+    }
+    const unsigned int hash = keen::getCrc32LwrValue(key);
+    wchar_t* existing = nullptr;
+    Localization_hash.get(hash, existing);
+    if (existing == nullptr)
+    {
+        Localization_hash.insert_key_data(hash, const_cast<wchar_t*>(Memtest_named_maps[k].text));
+    }
+}
 static player* Wrecking_crew_players[4]; // 0x02226BF8
 static control_config Wrecking_crew_main_player_ctrl_config_backup; // 0x02226C08
 static float Challenge_player_round_scores[4][3]; // 0x022277C0: per player and challenge round
@@ -550,7 +596,7 @@ static void wrecking_crew_parse_wrecking_crew(xml_element* root, int dlc_id)
         return;
     }
     char buffer[256];
-    for (xml_element* map = xml_find(maps, "map"); map != nullptr && Wrecking_crew_num_maps < 32; map = xml_find_next(maps, map, "map"))
+    for (xml_element* map = xml_find(maps, "map"); map != nullptr && Wrecking_crew_num_maps < Max_wrecking_crew_maps; map = xml_find_next(maps, map, "map"))
     {
         wrecking_crew_map_info* info = Wrecking_crew_map_pool.alloc(0);
         if (info == nullptr)
@@ -614,7 +660,7 @@ static void wrecking_crew_parse_wrecking_crew(xml_element* root, int dlc_id)
     {
         const memtest_wc_map_addition* additions = nullptr;
         const int count = memtest_wc_map_additions(&additions);
-        for (int a = 0; a < count && Wrecking_crew_num_maps < 32; a++)
+        for (int a = 0; a < count && Wrecking_crew_num_maps < Max_wrecking_crew_maps; a++)
         {
             if (additions[a].dlc_id != dlc_id || wrecking_crew_get_map_info(additions[a].file) != nullptr)
             {
@@ -627,9 +673,34 @@ static void wrecking_crew_parse_wrecking_crew(xml_element* root, int dlc_id)
                 memtest_event("sledge: cannot add Wrecking Crew map %s (no entry %s to copy, or the map pool is full)", additions[a].file, additions[a].copy_of);
                 continue;
             }
+            const char* file_name = Wrecking_crew_string_pool.add_unique(additions[a].file);
+            if (file_name == nullptr)
+            {
+                memtest_event("sledge: cannot add Wrecking Crew map %s (the tables' string pool is full)", additions[a].file);
+                continue;
+            }
             *info = *source;
-            info->file_name = Wrecking_crew_string_pool.add_unique(additions[a].file);
+            info->file_name = file_name;
             info->file_name_crc = checksum_stri(info->file_name, 0);
+            if (additions[a].name[0] != L'\0')
+            {
+                // A name of its own: a localization key for it, its text added to the game's table (memtest_map_name).
+                char key[96];
+                _snprintf_s(key, sizeof(key), _TRUNCATE, "openrfg_map_%s", additions[a].file);
+                if (const char* display_name = Wrecking_crew_string_pool.add_unique(key))
+                {
+                    info->display_name = display_name;
+                    memtest_map_name(info->display_name, additions[a].name);
+                }
+            }
+            if (additions[a].image[0] != '\0')
+            {
+                // A picture of its own: a container a mod's *_ui_images.asm_pc declares (ui_document_shared.cpp).
+                if (const char* img_name = Wrecking_crew_string_pool.add_unique(additions[a].image))
+                {
+                    info->img_name = img_name;
+                }
+            }
             Wrecking_crew_map_info[Wrecking_crew_num_maps] = info;
             Wrecking_crew_num_maps++;
             memtest_event("sledge: Wrecking Crew map %s added as map %d (a copy of %s's entry)", additions[a].file, Wrecking_crew_num_maps - 1, additions[a].copy_of);
@@ -1441,10 +1512,12 @@ void wrecking_crew_system_init()
     ui_document_menu_wrecking_crew_init();
     ui_document_menu_wrecking_crew_character_select_init();
     ui_document_menu_wrecking_crew_scoreboard_init();
-    Wrecking_crew_map_pool.init(Permanent_mempool, 32);
-    // Magic number 0xC00: the string pool of the tables' names.
-    void* address = Permanent_mempool.static_mempool_base::alloc(0xC00, 4);
-    Wrecking_crew_string_pool.init(address, 0xC00, nullptr, 0, 0);
+    Wrecking_crew_map_pool.init(Permanent_mempool, Max_wrecking_crew_maps); // OpenRFG64-memtest: 32 in rfg.exe
+    // Magic number 0xC00: the string pool of the tables' names. OpenRFG64-memtest: 128 bytes more for each map past
+    // rfg.exe's 32 (a Sledge map's file name, its name's key and its picture's name); full, a map's names would be null.
+    const unsigned int string_pool_size = 0xC00 + (Max_wrecking_crew_maps - 32) * 128;
+    void* address = Permanent_mempool.static_mempool_base::alloc(string_pool_size, 4);
+    Wrecking_crew_string_pool.init(address, string_pool_size, nullptr, 0, 0);
     Wrecking_crew_character_pool.init(Permanent_mempool, 50);
 }
 
@@ -2252,7 +2325,12 @@ const checksum_stri& wrecking_crew_get_map_file_name_crc(int map_index)
 // 0x00760520 (:2829)
 const char* wrecking_crew_get_map_display_name(int map_index)
 {
-    return map_index >= 0 && map_index < Wrecking_crew_num_maps ? Wrecking_crew_map_info[map_index]->display_name : nullptr;
+    if (map_index < 0 || map_index >= Wrecking_crew_num_maps)
+    {
+        return nullptr;
+    }
+    memtest_map_name(Wrecking_crew_map_info[map_index]->display_name, nullptr); // memtest: back after a reload of the text
+    return Wrecking_crew_map_info[map_index]->display_name;
 }
 
 // 0x00760540 (:2837)

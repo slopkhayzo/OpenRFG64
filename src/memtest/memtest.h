@@ -50,6 +50,7 @@ uint64_t memtest_budget(const char* name, uint64_t default_bytes);
 // ---- the Wrecking Crew start
 const char* memtest_wc_map();                                          // --wc, or nullptr
 bool memtest_wc_continue();                                            // unattended: press the match's continue
+bool memtest_hide_hud();                                               // Memtest.NoHud=1: the world alone (map pictures)
 
 // ---- the Sledge layer
 // The folders to mount beside /gamebuild: returns the native path of mount i (and its mount name), nullptr past the
@@ -64,8 +65,13 @@ struct memtest_wc_map_addition
     char file[64];
     char copy_of[64];
     int dlc_id;
+    wchar_t name[64]; // mod.lua's name = "..." (UTF-8 there): the map's own name in the menu; empty: the copied entry's
+    char image[64];   // mod.lua's image = "...": the map's picture (a container of a mod's *_ui_images.asm_pc); empty: the copied entry's
 };
 int memtest_wc_map_additions(const memtest_wc_map_addition** additions);
+// The enabled mods' picture declarations: files\ files named *_ui_images.asm_pc, read with the game's ui_images.asm_pc
+// (ui_document_create_stream_image_containers). Their names, at most max_names; returns the count.
+int memtest_sledge_ui_image_asms(const char** names, int max_names);
 
 // ---- accessors added to recovered files (their statics)
 int openrfg_num_collision_models();                                    // havok_cm_manager.cpp

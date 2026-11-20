@@ -758,6 +758,12 @@ void gamestate_gp_handshake(rl_renderer* pRenderer)
 // 0x007CD330 (:1360)
 void gamestate_gp_render(rl_renderer* pRenderer)
 {
+    if (memtest_hide_hud())
+    {
+        // memtest (Memtest.NoHud=1): the world alone, for a map's picture.
+        tracers_render();
+        return;
+    }
     if (wrecking_crew_is_active())
     {
         wrecking_crew_render();

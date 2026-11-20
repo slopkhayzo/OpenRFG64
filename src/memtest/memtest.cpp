@@ -15,6 +15,8 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/system/hkmemorysystem.h"
 #include "volition/rfg/code/gameplay/wrecking_crew/wrecking_crew.h"
 #include "volition/rfg/code/gamewide/gameseq.h"
+#include "volition/rfg/code/interface/localization/localization_shared.h"
+#include "volition/rfg/code/interface/ui_document_manager.h"
 #include "volition/rfg/code/level/world.h"
 #include "volition/rfg/code/rfg.h"
 #include "volition/vlib/code/cfile/cfile_common.h"
@@ -211,7 +213,7 @@ namespace
     char Mount_native[16][MAX_PATH];
     char Mount_name[16][32];
     int Mount_count = 0;
-    memtest_wc_map_addition Wc_additions[32];
+    memtest_wc_map_addition Wc_additions[256]; // as many as the game's map list (wrecking_crew.cpp)
     int Wc_addition_count = 0;
     volatile long Overlay_hits = 0;
 
@@ -405,11 +407,19 @@ namespace
                 continue;
             }
             a.dlc_id = dlc_id;
-            if (Wc_addition_count < 32)
+            char name[192] = "";
+            if (lua_string_field(open, close, "name", name, sizeof(name)))
+            {
+                MultiByteToWideChar(CP_UTF8, 0, name, -1, a.name, (int)(sizeof(a.name) / sizeof(a.name[0])));
+                a.name[sizeof(a.name) / sizeof(a.name[0]) - 1] = L'\0';
+            }
+            lua_string_field(open, close, "image", a.image, sizeof(a.image));
+            if (Wc_addition_count < (int)(sizeof(Wc_additions) / sizeof(Wc_additions[0])))
             {
                 Wc_additions[Wc_addition_count++] = a;
                 found++;
-                memtest_event("sledge: %s: Wrecking Crew map %s (a copy of %s's entry) in %s", id, a.file, a.copy_of,
+                memtest_event("sledge: %s: Wrecking Crew map %s (a copy of %s's entry%s%s%s%s) in %s", id, a.file, a.copy_of,
+                              name[0] ? ", named " : "", name, a.image[0] ? ", picture " : "", a.image,
                               dlc_id < 0 ? "wrecking_crew.xtbl" : "a dlc wrecking crew table");
             }
         }
@@ -1227,6 +1237,44 @@ namespace
         {
             return;
         }
+        // The chosen map's picture (a Sledge map's own: a container its mod's *_ui_images.asm_pc declares), loaded
+        // once before the match as the menu loads it, to show that it does: up to 5 s.
+        {
+            static int picture_state = 0; // 0 not asked, 1 loading, 2 done
+            static unsigned long long picture_since = 0;
+            const char* image = nullptr;
+            for (int i = 0; i < wrecking_crew_get_num_maps(); i++)
+            {
+                const char* file = wrecking_crew_get_map_file_name(i);
+                if (file != nullptr && _stricmp(file, Wc_map) == 0)
+                {
+                    image = wrecking_crew_get_map_image_name(i);
+                }
+            }
+            if (image != nullptr && picture_state == 0)
+            {
+                picture_state = ui_request_image(image) ? 1 : 2;
+                picture_since = now;
+                if (picture_state == 2)
+                {
+                    memtest_event("wc: %s's picture %s: not requested (no such container)", Wc_map, image);
+                }
+                return;
+            }
+            if (image != nullptr && picture_state == 1)
+            {
+                const stream2_status_val status = ui_get_image_status(image);
+                if (status == ST_LOADING && now - picture_since < 5000)
+                {
+                    return;
+                }
+                memtest_event("wc: %s's picture %s: %s after %llu ms", Wc_map, image,
+                              status == ST_LOADED ? "loaded" : status == ST_ERROR ? "error" : status == ST_LOADING ? "still loading" : "not loaded",
+                              now - picture_since);
+                ui_release_image(image);
+                picture_state = 2;
+            }
+        }
         Wc_started = true;
         // Total chaos, 1 player, weapon 4 (thermobaric rockets), no time limit: rfgphys's avenue default.
         const char* hex = Wc_options_hex != nullptr ? Wc_options_hex : "030000000100000013000000120000000400000000000000FFFFFFFF010000000500000000010000FFFFFFFF";
@@ -1264,6 +1312,34 @@ namespace
             }
             memtest_event("wc: map %s is not in the Wrecking Crew list (%d maps: %s); not starting", Wc_map, count, list);
             return;
+        }
+        // The list as the menu shows it: each map's file and name (the Sledge maps' own names included).
+        {
+            char line[900] = "";
+            for (int i = 0; i < count; i++)
+            {
+                const char* file = wrecking_crew_get_map_file_name(i);
+                const char* key = wrecking_crew_get_map_display_name(i);
+                const wchar_t* text = key != nullptr ? localization_get_display_string_opt(key) : nullptr;
+                char name[96] = "?";
+                if (text != nullptr)
+                {
+                    WideCharToMultiByte(CP_UTF8, 0, text, -1, name, (int)sizeof(name), nullptr, nullptr);
+                    name[sizeof(name) - 1] = '\0';
+                }
+                char item[192];
+                _snprintf_s(item, sizeof(item), _TRUNCATE, "%d %s \"%s\"; ", i, file != nullptr ? file : "?", name);
+                if (strlen(line) + strlen(item) >= sizeof(line))
+                {
+                    memtest_event("wc: maps: %s", line);
+                    line[0] = '\0';
+                }
+                strncat_s(line, item, _TRUNCATE);
+            }
+            if (line[0] != '\0')
+            {
+                memtest_event("wc: maps: %s", line);
+            }
         }
         Wrecking_crew_options.map_index = index;
         Wrecking_crew_options.current_challenge_id = -1;
@@ -1637,6 +1713,19 @@ const char* memtest_wc_map()
     return Wc_map;
 }
 
+// Memtest.NoHud=1 (OPENRFG_MEMTEST_NOHUD): gameplay draws the world alone, for a map's picture (no HUD, no Wrecking
+// Crew panels, no menus, no FPS counter).
+bool memtest_hide_hud()
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        char value[8] = "";
+        on = GetEnvironmentVariableA("OPENRFG_MEMTEST_NOHUD", value, sizeof(value)) > 0 && value[0] == '1' ? 1 : 0;
+    }
+    return on != 0;
+}
+
 // Unattended runs (OPENRFG_MEMTEST_WCCONTINUE=1, set by the run script with -IgnoreFocus): the match's "continue"
 // screens are passed after 1.5 s, the first one before the player's turn among them (the match waits there).
 bool memtest_wc_continue()
@@ -1719,4 +1808,20 @@ int memtest_wc_map_additions(const memtest_wc_map_addition** additions)
 {
     *additions = Wc_additions;
     return Wc_addition_count;
+}
+
+int memtest_sledge_ui_image_asms(const char** names, int max_names)
+{
+    static const char suffix[] = "_ui_images.asm_pc";
+    const size_t slen = sizeof(suffix) - 1;
+    int n = 0;
+    for (int i = 0; i < Overlay_file_count && n < max_names; i++)
+    {
+        const size_t len = strlen(Overlay_files[i].name);
+        if (len > slen && _stricmp(Overlay_files[i].name + len - slen, suffix) == 0)
+        {
+            names[n++] = Overlay_files[i].name;
+        }
+    }
+    return n;
 }
