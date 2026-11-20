@@ -10,6 +10,7 @@
 // hkReferencedObject). With objects on the heap a cycle of owning pointers fails the copy.
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/serialize/data/util/hkdataobjectutil.h"
 
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/object/hkreferencedobject.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/reflection/attributes/hkattributes.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/container/pointermap/hkmap.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/reflection/hkclass.h"
@@ -215,8 +216,12 @@ void Copier::finishAndRefcountLiveObjects(const hkTypeInfoRegistry* typeReg)
         if ((short)info.m_refCount > 0)
         {
             const unsigned int memSize = info.m_size < 0 ? (unsigned int)v.m_class->getObjectSize() : (unsigned int)info.m_size;
-            // hkReferencedObject::m_memSizeAndRefCount (+0x04), written atomically
-            volatile long* word = (volatile long*)(static_cast<char*>(v.m_object) + 4);
+            // hkReferencedObject::m_memSizeAndRefCount, right after the vtable pointer (+0x04 in rfg.exe), written
+            // atomically. x64: it is at +0x08; +4 wrote into the vtable pointer, which the finishing
+            // constructor below then set again, and left the size 0: every object loaded on the heap (a level's
+            // collision models among them) was never freed.
+            static_assert(sizeof(hkReferencedObject) == 2 * sizeof(void*), "hkReferencedObject: a vtable pointer, then m_memSizeAndRefCount");
+            volatile long* word = (volatile long*)(static_cast<char*>(v.m_object) + sizeof(void*));
             const long value = (long)((memSize << 16) | (unsigned short)info.m_refCount);
             long old;
             do
