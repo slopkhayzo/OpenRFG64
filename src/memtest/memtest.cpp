@@ -877,10 +877,43 @@ namespace
     }
 
     // Under the far table's lock.
+    // The far entries a level takes can go when it is gone (memtest_level_load_start) if their field or their target
+    // lies in memory its unload gives back: the "big containers" and "level memory" regions. Entries taken since the
+    // level's load began with neither (lasting ones) keep the level's entries.
+    unsigned int Far_lasting_since_mark = 0;
+
+    bool transient_area(const far_area& a)
+    {
+        static int Big = -2;
+        static int Level = -2;
+        if (Big == -2)
+        {
+            Big = -1;
+            Level = -1;
+            scaling_region_info info;
+            for (int i = 0; scaling_region(i, &info); i++)
+            {
+                if (info.name != nullptr && strcmp(info.name, "big containers") == 0)
+                {
+                    Big = i;
+                }
+                else if (info.name != nullptr && strcmp(info.name, "level memory") == 0)
+                {
+                    Level = i;
+                }
+            }
+        }
+        return a.kind == 1 && ((int)a.id == Big || (int)a.id == Level);
+    }
+
     void note_far_entry(const void* field, const void* target)
     {
         const far_area f = far_area_of(field);
         const far_area t = far_area_of(target);
+        if (!transient_area(f) && !transient_area(t))
+        {
+            Far_lasting_since_mark++;
+        }
         for (int i = 0; i < Far_pair_count; i++)
         {
             far_pair& p = Far_pairs[i];
@@ -1586,6 +1619,70 @@ void memtest_frame()
 void memtest_level_event(const char* what)
 {
     memtest_event("level: %s", what);
+}
+
+#ifdef OPENRFG_X64
+namespace
+{
+    unsigned int Far_level_mark = 0; // the far table's count when the level began to load
+    unsigned int Far_exit_count = 0; // its count when that level's gameplay ended
+    unsigned int Far_mark_level_used = 0; // level memory in use when the level began to load
+    bool Far_level_exited = false;
+}
+#endif
+
+// The far entries a level took go when the next one begins to load: its gameplay ended (gamestate_gp_exit) and its
+// containers were unloaded since (stream2 unloads them after the exit queued them). Only when no entry was taken
+// since its gameplay ended (the menus took none in the runs), none of the level's lies outside the memory its unload
+// gave back (note_far_entry: a field or a target in big containers or level memory), and the big containers have
+// nothing committed any more; otherwise they stay, and the events say why. Then the mark for this level.
+void memtest_level_load_start()
+{
+#ifdef OPENRFG_X64
+    et_far::tables& t = et_far::get_tables();
+    if (Far_level_exited)
+    {
+        Far_level_exited = false;
+        const unsigned int taken = Far_exit_count - Far_level_mark;
+        const double big_mb = big_committed_mb();
+        if (env_int("OPENRFG_MEMTEST_FARREUSE", 1) == 0)
+        {
+        }
+        else if (t.count != Far_exit_count)
+        {
+            memtest_event("far table: %u entries taken since the last level's gameplay ended: its %u kept", t.count - Far_exit_count, taken);
+        }
+        else if (Far_lasting_since_mark != 0)
+        {
+            memtest_event("far table: %u of the last level's %u entries lie outside the memory its unload gave back: all kept", Far_lasting_since_mark, taken);
+        }
+        else if (big_mb > 0.0)
+        {
+            memtest_event("far table: the big containers still hold %.1f MB: the last level's %u entries kept", big_mb, taken);
+        }
+        else if (Level_memmgr.space_used() > Far_mark_level_used)
+        {
+            memtest_event("far table: level memory holds %.1f MB more than when the last level began to load: its %u entries kept",
+                          mb(Level_memmgr.space_used() - Far_mark_level_used), taken);
+        }
+        else if (taken > 0)
+        {
+            const unsigned int dropped = et_far::release_from(Far_level_mark);
+            memtest_event("far table: the last level's %u entries released (%u kept)", dropped, Far_level_mark);
+        }
+    }
+    Far_level_mark = t.count;
+    Far_lasting_since_mark = 0;
+    Far_mark_level_used = Level_memmgr.space_used();
+#endif
+}
+
+void memtest_level_gameplay_end()
+{
+#ifdef OPENRFG_X64
+    Far_exit_count = et_far::get_tables().count;
+    Far_level_exited = true;
+#endif
 }
 
 // ---- what the recovered code reports

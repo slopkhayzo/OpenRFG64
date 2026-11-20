@@ -6,14 +6,16 @@
 
 #ifdef OPENRFG_X64
 #include <intrin.h>
+#include <string.h>
 // x64: a self-relative 32-bit offset cannot reach a target more than 2 GB away (the heaps are far apart). Such a
 // target goes in a global table and the offset holds 0x7F000000 + its index (a real distance never reaches that).
 namespace et_far
 {
 static const int Base = 0x7F000000;
 // OpenRFG64-memtest: 16,777,215 (1 million in OpenRFG64), as many as the offset's encoding holds (Base + index stays
-// below 2^31). None is ever freed: the ten avenues of tall buildings take 4.2 million a load, so 4 million would not
-// hold one of them, and this holds three.
+// below 2^31). The ten avenues of tall buildings take 4.2-4.5 million a load (4 million would not hold one). A level's
+// entries are dropped when the next level begins to load (release_from, memtest_level_load_start): without that none
+// was ever freed and about three such loads filled the table.
 static const unsigned int Max_entries = 0xFFFFFF;
 static const unsigned int Hash_size = 0x2000000;
 struct tables
@@ -71,6 +73,36 @@ inline int far_index_of(const void* target, const void* field = nullptr)
 inline void* far_target(int offset)
 {
     return get_tables().targets[offset - Base];
+}
+// OpenRFG64-memtest: the entries from `keep` on are dropped (a level's, once it is gone: memtest_level_load_start) and
+// the hash is built again from the ones kept. A dropped entry's target becomes null: a field still holding it fails
+// at once instead of reading memory that something else took. Returns how many were dropped.
+inline unsigned int release_from(unsigned int keep)
+{
+    tables& t = get_tables();
+    while (_InterlockedCompareExchange(&t.lock, 1, 0) != 0)
+    {
+    }
+    unsigned int dropped = 0;
+    if (keep < t.count)
+    {
+        dropped = t.count - keep;
+        memset(t.hash, 0, sizeof(t.hash));
+        memset(&t.targets[keep], 0, (size_t)dropped * sizeof(void*));
+        for (unsigned int i = 0; i < keep; i++)
+        {
+            const unsigned long long k = (unsigned long long)t.targets[i];
+            unsigned int h = (unsigned int)((k >> 4) * 0x9E3779B1u) & (Hash_size - 1);
+            while (t.hash[h] != 0)
+            {
+                h = (h + 1) & (Hash_size - 1);
+            }
+            t.hash[h] = i + 1;
+        }
+        t.count = keep;
+    }
+    _InterlockedExchange(&t.lock, 0);
+    return dropped;
 }
 } // namespace et_far
 #endif

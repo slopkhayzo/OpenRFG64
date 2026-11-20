@@ -17,6 +17,7 @@
 // helpers request_input_id and hide_loading_screen, or as the public call.
 
 #include "volition/rfg/code/interface/loading.h"
+#include "memtest/memtest.h" // memtest: memtest_level_load_start
 
 #include "keen/base/trace.hpp"
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -416,6 +417,7 @@ static void world_load_job(cpu_job* de_job, cpu_job_arg arg1, cpu_job_arg arg2)
 // VLIB_CRITICAL_FAILURE if it is reached.
 static void gs_load_enter(game_state prev_state)
 {
+    memtest_level_load_start(); // memtest: the last level's far-offset entries go (x64), a mark for this one
     Gs_load_first_frame = true;
     Loading_assets_loaded = false;
     Loading_screen_delay_one_frame = true;

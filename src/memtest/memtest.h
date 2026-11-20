@@ -31,6 +31,11 @@ struct cf_found_info;
 void memtest_init();         // the start of WinMain: plugins, the Sledge folder, the output files
 void memtest_frame();        // every frame (rfg_do_frame): the census and the Wrecking Crew start
 void memtest_level_event(const char* what);
+// x64: a level begins to load (gs_load_enter): the far-offset entries the last level took go, when it is gone and
+// they all lay in memory its unload gave back (Memtest.FarReuse=0 keeps them). Its gameplay ended
+// (gamestate_gp_exit's end).
+void memtest_level_load_start();
+void memtest_level_gameplay_end();
 
 // ---- what the recovered code reports
 void memtest_pool_register(mempool_base* pool);

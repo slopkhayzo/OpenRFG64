@@ -696,6 +696,7 @@ void gamestate_gp_exit(game_state new_state)
     hud_ui_mission_complete_level_shutdown();
     hud_ui_activity_complete_level_shutdown();
     hud_ui_activity_briefing_level_shutdown();
+    memtest_level_gameplay_end(); // memtest: the level is shut down (its containers queued for unloading)
 }
 
 // 0x007EE450 (:1251)
