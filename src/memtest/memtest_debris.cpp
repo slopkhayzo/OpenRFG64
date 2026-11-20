@@ -20,6 +20,10 @@
 // off through every building's box, building by building, nearest first, the way rfgphys's Test.StressPieces
 // demolishes in rfg.exe; a new cycle then takes what still stands (big chunks included). The player is made
 // invulnerable. Memtest.DemolishCycles (default 6) and Memtest.DemolishBlastsPerFrame (default 4).
+//
+// A generated map's ground slab (tools/maps: the avenues' plateau, a building of indestructible tiles) is made
+// terrain to Havok, so that Havok's debris land on it (ground_slab_frame; Memtest.GroundAsTerrain=0 leaves it a
+// building). Diagnostics: Memtest.FloorProbe and Memtest.FloorY (floor_frame).
 
 #include "memtest/memtest.h"
 #include "scaling/scaling.h" // scaling
@@ -32,6 +36,10 @@
 #include "volition/rfg/code/gamewide/game_render.h"
 #include "volition/rfg/code/gamewide/gameseq.h"
 #include "volition/rfg/code/havok/havok.h"
+#include "volition/rfg/code/havok/havok_raycast.h" // the floor probe
+#include "volition/rfg/code/destruction/rfg_shapes.h" // the ground slab: its elements
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/collide/agent/collidable/hkpcollidable.h"
+#include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/dynamics/entity/hkprigidbody.h"
 #include "volition/rfg/code/level/world.h"
 #include "volition/rfg/code/level/world_internal.h"
 #include "volition/rfg/code/multi/multi_core/include/multi.h"
@@ -52,6 +60,7 @@
 #include <algorithm>
 #include <atomic>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <vector>
@@ -77,6 +86,7 @@ namespace
     bool Demolish;
     int Demolish_cycles = 6;
     int Demolish_per_frame = 4;
+    bool Ground_as_terrain = true; // Memtest.GroundAsTerrain (ground_slab_frame)
 
     int env_int(const char* name, int default_value)
     {
@@ -103,6 +113,7 @@ namespace
         Demolish_cycles = env_int("OPENRFG_MEMTEST_DEMOLISHCYCLES", 6);
         const int per_frame = env_int("OPENRFG_MEMTEST_DEMOLISHBLASTSPERFRAME", 4);
         Demolish_per_frame = per_frame < 1 ? 1 : per_frame > 32 ? 32 : per_frame;
+        Ground_as_terrain = env_int("OPENRFG_MEMTEST_GROUNDASTERRAIN", 1) != 0;
     }
 
     std::atomic<int> Zone_free{ Zone_handles }; // free handles in the fullest zone, less the pieces kept since
@@ -432,6 +443,377 @@ namespace
         }
         Next_ms = now + (Cycle == 1 ? 0 : Cycle_gap_ms);
     }
+
+    // ---- the floor checks (diagnostics, off unless set): does Havok have a map's floor, do debris stay on it
+    // Memtest.FloorProbe=x0,z0,x1,z1,step,top (OPENRFG_MEMTEST_FLOORPROBE): 15 s into the match, vertical rays every
+    // `step` metres over the box, from top + 20 m to top - 60 m, against the static level and against destroyable
+    // geometry: floor_probe.csv in the run folder (each ray's nearest hit of both) and an event with the counts: the
+    // first surface from above at the floor (top, within 0.5 m), above it (a building), below it (under the floor) or
+    // none. Memtest.FloorY=Y (OPENRFG_MEMTEST_FLOORY): every 5 s, the debris (load-balanced general movers) below Y,
+    // with a few positions (pieces that went through a map's floor).
+    bool Floor_read;
+    bool Probe_on;
+    bool Probe_done;
+    float Probe_box[6]; // x0, z0, x1, z1, step, top
+    bool Floor_y_on;
+    float Floor_y;
+    unsigned long long Floor_start_ms;
+    unsigned long long Floor_last_ms;
+    int Floor_last_below = -1;
+    int Floor_lines;
+
+    float env_float(const char* name, bool* set)
+    {
+        char value[32];
+        const DWORD n = GetEnvironmentVariableA(name, value, sizeof(value));
+        *set = n > 0 && n < sizeof(value);
+        return *set ? (float)atof(value) : 0.0f;
+    }
+
+    // The y of a vertical ray's nearest hit, or -1e9 for none.
+    float ray_hit_y(float x, float z, float y0, float y1, bool destroyable)
+    {
+        raycast_input in;
+        in.start = vector(x, y0, z);
+        in.end = vector(x, y1, z);
+        in.radius = 0.0f;
+        in.filter_params = nullptr;
+        in.filter_callback = nullptr;
+        in.m_hit_collector_type = raycast_input::COLLECT_CLOSEST_HIT;
+        in.m_flags = 0;
+        raycast_output out;
+        const bool hit = destroyable ? havok_raycast_against_destroyable_geometry(in, out) : havok_raycast_against_static_level_only(in, out);
+        if (!hit || out.m_hits.getSize() == 0)
+        {
+            return -1e9f;
+        }
+        float best = 2.0f;
+        for (int i = 0; i < out.m_hits.getSize(); i++)
+        {
+            best = out.m_hits[i].hit_fraction < best ? out.m_hits[i].hit_fraction : best;
+        }
+        return y0 + (y1 - y0) * best;
+    }
+
+    void floor_probe()
+    {
+        const float x0 = Probe_box[0], z0 = Probe_box[1], x1 = Probe_box[2], z1 = Probe_box[3];
+        const float step = Probe_box[4] >= 0.5f ? Probe_box[4] : 0.5f, top = Probe_box[5];
+        const int nx = (int)((x1 - x0) / step) + 1;
+        const int nz = (int)((z1 - z0) / step) + 1;
+        if (nx <= 0 || nz <= 0 || (long long)nx * nz > 200000)
+        {
+            memtest_event("floor probe: %d x %d rays: not run (a box of at most 200,000 rays)", nx, nz);
+            return;
+        }
+        char path[MAX_PATH];
+        const DWORD n = GetEnvironmentVariableA("OPENRFG_RUN_DIR", path, MAX_PATH - 20);
+        strcpy_s(path + (n > 0 && n < MAX_PATH - 20 ? n : 0), 20, n > 0 && n < MAX_PATH - 20 ? "\\floor_probe.csv" : "floor_probe.csv");
+        FILE* f = nullptr;
+        fopen_s(&f, path, "w");
+        if (f != nullptr)
+        {
+            fprintf(f, "x,z,static_y,destroyable_y\n");
+        }
+        int at_floor = 0, above = 0, below = 0, none = 0, logged = 0;
+        float bx0 = 1e9f, bz0 = 1e9f, bx1 = -1e9f, bz1 = -1e9f; // the box of the rays that miss the floor
+        const unsigned long long t0 = GetTickCount64();
+        for (int i = 0; i < nx; i++)
+        {
+            for (int j = 0; j < nz; j++)
+            {
+                const float x = x0 + step * (float)i;
+                const float z = z0 + step * (float)j;
+                const float s = ray_hit_y(x, z, top + 20.0f, top - 60.0f, false);
+                const float d = ray_hit_y(x, z, top + 20.0f, top - 60.0f, true);
+                if (f != nullptr)
+                {
+                    fprintf(f, "%.2f,%.2f,", x, z);
+                    s > -1e8f ? fprintf(f, "%.3f,", s) : fprintf(f, ",");
+                    d > -1e8f ? fprintf(f, "%.3f\n", d) : fprintf(f, "\n");
+                }
+                const float y = s > d ? s : d;
+                if (y < -1e8f || y < top - 0.5f)
+                {
+                    y < -1e8f ? none++ : below++;
+                    bx0 = x < bx0 ? x : bx0;
+                    bz0 = z < bz0 ? z : bz0;
+                    bx1 = x > bx1 ? x : bx1;
+                    bz1 = z > bz1 ? z : bz1;
+                    if (logged < 12)
+                    {
+                        logged++;
+                        memtest_event("floor probe: no floor at (%.1f, %.1f): static level %s%.2f, destroyable geometry %s%.2f", x, z,
+                                      s > -1e8f ? "" : "none ", s > -1e8f ? s : 0.0f, d > -1e8f ? "" : "none ", d > -1e8f ? d : 0.0f);
+                    }
+                }
+                else if (y > top + 0.5f)
+                {
+                    above++;
+                }
+                else
+                {
+                    at_floor++;
+                }
+            }
+        }
+        if (f != nullptr)
+        {
+            fclose(f);
+        }
+        memtest_event("floor probe: %d rays every %.1f m over x %.0f..%.0f, z %.0f..%.0f (%llu ms): the floor at %.1f %d, above it %d, under it %d, nothing %d%s",
+                      nx * nz, step, x0, x1, z0, z1, GetTickCount64() - t0, top, at_floor, above, below, none, below + none > 0 ? "; misses within:" : "");
+        if (below + none > 0)
+        {
+            memtest_event("floor probe: misses within x %.1f..%.1f, z %.1f..%.1f (floor_probe.csv has every ray)", bx0, bx1, bz0, bz1);
+        }
+    }
+
+    // The debris' collision types (their bodies' filter infos), counted: the first 6 distinct ones.
+    struct type_tally
+    {
+        unsigned int info[6];
+        int count[6];
+        int other;
+
+        void add(unsigned int v)
+        {
+            for (int k = 0; k < 6; k++)
+            {
+                if (count[k] == 0)
+                {
+                    info[k] = v;
+                }
+                if (info[k] == v)
+                {
+                    count[k]++;
+                    return;
+                }
+            }
+            other++;
+        }
+
+        void print(char* out, size_t size) const
+        {
+            size_t used = 0;
+            out[0] = '\0';
+            for (int k = 0; k < 6 && count[k] > 0 && used < size; k++)
+            {
+                const int w = snprintf(out + used, size - used, " %08X:%d", info[k], count[k]);
+                used += w > 0 ? (size_t)w : 0;
+            }
+            if (other > 0 && used < size)
+            {
+                snprintf(out + used, size - used, " other:%d", other);
+            }
+        }
+    };
+
+    void floor_census()
+    {
+        const int n = World.get_num_objects<general_mover>();
+        int debris = 0, below = 0;
+        char where[256] = "";
+        size_t used = 0;
+        type_tally all = {};
+        type_tally under = {};
+        for (int i = 0; i < n; i++)
+        {
+            general_mover* gm = World.get_object<general_mover>(i);
+            if (gm == nullptr || (gm->mover_flags & 0x4) == 0 || gm->obj_flags.destroyed)
+            {
+                continue;
+            }
+            debris++;
+            hkpRigidBody* rb = gm->havok_handle != 0xFFFFFFFF ? havok_body_get_pointer(gm->havok_handle) : nullptr;
+            const unsigned int info = rb != nullptr ? rb->getCollidable()->getCollisionFilterInfo() : 0xFFFFFFFFu;
+            all.add(info);
+            if (gm->pos.y < Floor_y)
+            {
+                if (below < 4 && used < sizeof(where) - 48)
+                {
+                    const int w = snprintf(where + used, sizeof(where) - used, " (%.1f, %.1f, %.1f)", gm->pos.x, gm->pos.y, gm->pos.z);
+                    used += w > 0 ? (size_t)w : 0;
+                }
+                under.add(info);
+                below++;
+            }
+        }
+        if (below != Floor_last_below && Floor_lines < 120)
+        {
+            Floor_lines++;
+            Floor_last_below = below;
+            char all_types[160];
+            char under_types[160];
+            all.print(all_types, sizeof(all_types));
+            under.print(under_types, sizeof(under_types));
+            memtest_event("floor: %d of %d debris below y %.1f%s%s; collision types of all:%s; below:%s", below, debris, Floor_y,
+                          below > 0 ? ", e.g." : "", where, all_types, under_types);
+        }
+    }
+
+    // ---- a map's ground slab is terrain to Havok
+    // In Wrecking Crew every small piece of debris is world-only (COLLIDE_RFG_WORLD_ONLY: layer 44, system group 6),
+    // and the game's layer table lets world-only pieces meet the terrain and characters only: they fall through
+    // buildings onto the terrain. The avenues' ground is a building (tools/maps rfg_gen.make_ground: a fixed mover of
+    // indestructible tiles, COLLIDE_RFG_INITIAL_POSITION, layer 39 like every building), so Havok's debris fell through
+    // it, onto wc2's terrain under it or past it for good. PhysX's debris met it (rfgphys mirrors it). Letting
+    // world-only pieces meet every fixed mover (as rfgphys's DebrisCollide does) put them in contact with the buildings
+    // as well: 17 fps became 2.7 on ten avenues. So the slab alone gets the terrain's collision type (COLLIDE_WORLD):
+    // debris land on it as on terrain, and whatever meets terrain meets it. It is found by its elements (dlods), named
+    // "ground" or "groundN" by the generator (and "apronN": THE AVENUE's, the PhysX project's build), whose name hash is
+    // zlib's CRC-32 of the name. Every 2 s the movers are looked at again (a level's load, the game setting a type
+    // back). Memtest.GroundAsTerrain=0 (OPENRFG_MEMTEST_GROUNDASTERRAIN) leaves the slab a building. Kept debris that
+    // goes through terrain as well (Havok, keep debris: 40-75% on vanilla wc2 under the demolition) is another matter.
+    unsigned int Ground_hashes[17]; // "ground", "ground0" .. "ground15"
+    unsigned int Apron_hashes[16];  // "apron0" .. "apron15" (THE AVENUE's ground carries on past the slab in aprons)
+    bool Ground_hashes_made;
+    unsigned long long Ground_next_ms;
+    int Ground_lines;
+
+    unsigned int crc32_of(const char* s)
+    {
+        unsigned int c = 0xFFFFFFFFu;
+        for (; *s != '\0'; s++)
+        {
+            c ^= (unsigned char)*s;
+            for (int k = 0; k < 8; k++)
+            {
+                c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+            }
+        }
+        return ~c;
+    }
+
+    // 1: an element named "ground" or "groundN", 2: "apronN", 0: neither.
+    int ground_element(unsigned int h)
+    {
+        if (!Ground_hashes_made)
+        {
+            Ground_hashes_made = true;
+            Ground_hashes[0] = crc32_of("ground");
+            char name[16];
+            for (int i = 0; i < 16; i++)
+            {
+                snprintf(name, sizeof(name), "ground%d", i);
+                Ground_hashes[i + 1] = crc32_of(name);
+                snprintf(name, sizeof(name), "apron%d", i);
+                Apron_hashes[i] = crc32_of(name);
+            }
+        }
+        for (const unsigned int g : Ground_hashes)
+        {
+            if (g == h)
+            {
+                return 1;
+            }
+        }
+        for (const unsigned int a : Apron_hashes)
+        {
+            if (a == h)
+            {
+                return 2;
+            }
+        }
+        return 0;
+    }
+
+    // Every element of its shape named "ground", "groundN" or "apronN", one of them at least a ground.
+    bool is_ground_slab(rfg_mover* rm)
+    {
+        const rfg_destroyable_shape* shape = rm->get_shape();
+        if (shape == nullptr || shape->parent == nullptr || shape->parent->num_dlods <= 0)
+        {
+            return false;
+        }
+        const rfg_dlod_base* dlods = shape->parent->base_dlods.to_pointer();
+        bool ground = false;
+        for (int i = 0; i < shape->parent->num_dlods; i++)
+        {
+            const int kind = ground_element(dlods[i].name_hash);
+            if (kind == 0)
+            {
+                return false;
+            }
+            ground = ground || kind == 1;
+        }
+        return ground;
+    }
+
+    void ground_slab_frame()
+    {
+        if (!Ground_as_terrain || !single_player())
+        {
+            return;
+        }
+        const unsigned long long now = GetTickCount64();
+        if (now < Ground_next_ms)
+        {
+            return;
+        }
+        Ground_next_ms = now + 2000;
+        const int n = World.get_num_objects<rfg_mover>();
+        for (int i = 0; i < n; i++)
+        {
+            rfg_mover* rm = World.get_object<rfg_mover>(i);
+            if (rm == nullptr || rm->obj_flags.destroyed || rm->havok_handle == 0xFFFFFFFF || !is_ground_slab(rm))
+            {
+                continue;
+            }
+            hkpRigidBody* rb = havok_body_get_pointer(rm->havok_handle);
+            if (rb == nullptr)
+            {
+                continue;
+            }
+            const unsigned int before = rb->getCollidable()->getCollisionFilterInfo();
+            if (before == COLLIDE_WORLD)
+            {
+                continue;
+            }
+            havok_body_set_collision_type(rm->havok_handle, COLLIDE_WORLD, false, false);
+            if (Ground_lines < 16)
+            {
+                Ground_lines++;
+                vector bmin;
+                vector bmax;
+                rm->get_bbox(bmin, bmax);
+                memtest_event("ground: the ground slab (%d elements, x %.0f..%.0f, z %.0f..%.0f, top %.1f) is terrain to Havok now: collision type %08X, was %08X",
+                              rm->get_shape()->parent->num_dlods, bmin.x, bmax.x, bmin.z, bmax.z, bmax.y, rb->getCollidable()->getCollisionFilterInfo(), before);
+            }
+        }
+    }
+
+    void floor_frame()
+    {
+        if (!Floor_read)
+        {
+            Floor_read = true;
+            char value[96];
+            const DWORD n = GetEnvironmentVariableA("OPENRFG_MEMTEST_FLOORPROBE", value, sizeof(value));
+            Probe_on = n > 0 && n < sizeof(value) &&
+                       sscanf_s(value, "%f,%f,%f,%f,%f,%f", &Probe_box[0], &Probe_box[1], &Probe_box[2], &Probe_box[3], &Probe_box[4], &Probe_box[5]) == 6;
+            Floor_y = env_float("OPENRFG_MEMTEST_FLOORY", &Floor_y_on);
+        }
+        if (!Probe_on && !Floor_y_on)
+        {
+            return;
+        }
+        const unsigned long long now = GetTickCount64();
+        if (Floor_start_ms == 0)
+        {
+            Floor_start_ms = now;
+        }
+        if (Probe_on && !Probe_done && now - Floor_start_ms >= 15000)
+        {
+            Probe_done = true;
+            floor_probe();
+        }
+        if (Floor_y_on && now - Floor_last_ms >= 5000)
+        {
+            Floor_last_ms = now;
+            floor_census();
+        }
+    }
 } // namespace
 
 // ---- settings read by the recovered code
@@ -631,8 +1013,10 @@ void memtest_sim_frame()
 {
     read_settings();
     log_settings();
+    ground_slab_frame();
     update_budget();
     demolish_frame();
+    floor_frame();
 }
 
 void memtest_debris_numbers(memtest_debris_counts* out)
