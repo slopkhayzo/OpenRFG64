@@ -16,6 +16,7 @@
 #include "volition/rfg/code/gameplay/wrecking_crew/wrecking_crew.h"
 #include "volition/rfg/code/gamewide/gameseq.h"
 #include "volition/rfg/code/interface/localization/localization_shared.h"
+#include "volition/rfg/code/interface/loading.h" // game_set_wc_shutdown (Memtest.WcRepeat)
 #include "volition/rfg/code/interface/ui_document_manager.h"
 #include "volition/rfg/code/level/world.h"
 #include "volition/rfg/code/rfg.h"
@@ -1216,6 +1217,37 @@ namespace
         return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
     }
 
+    int env_int(const char* name, int fallback)
+    {
+        char value[32] = "";
+        const DWORD n = GetEnvironmentVariableA(name, value, sizeof(value));
+        return n > 0 && n < sizeof(value) ? atoi(value) : fallback;
+    }
+
+    // The "big containers" region's committed memory (a big map's World container) and the far table's entries:
+    // logged at each match start and round end (Memtest.WcRepeat), to see what an unload gives back.
+    double big_committed_mb()
+    {
+        scaling_region_info info;
+        for (int i = 0; scaling_region(i, &info); i++)
+        {
+            if (info.name != nullptr && strcmp(info.name, "big containers") == 0)
+            {
+                return (double)info.committed / 1048576.0;
+            }
+        }
+        return 0.0;
+    }
+
+    unsigned int far_entries()
+    {
+#ifdef OPENRFG_X64
+        return et_far::get_tables().count;
+#else
+        return 0;
+#endif
+    }
+
     void wc_drive()
     {
         if (Wc_map == nullptr || Wc_started)
@@ -1276,6 +1308,10 @@ namespace
             }
         }
         Wc_started = true;
+        // The menu's picture bookkeeping (wcmm_do_state_change): loading, it requested the picture of map_index;
+        // unloading, it releases those of map_index and old_map_index. The options below would overwrite both.
+        const int menu_map_index = Wrecking_crew_options.map_index;
+        const int menu_old_map_index = Wrecking_crew_options.old_map_index;
         // Total chaos, 1 player, weapon 4 (thermobaric rockets), no time limit: rfgphys's avenue default.
         const char* hex = Wc_options_hex != nullptr ? Wc_options_hex : "030000000100000013000000120000000400000000000000FFFFFFFF010000000500000000010000FFFFFFFF";
         unsigned char bytes[sizeof(wrecking_crew_options)];
@@ -1341,14 +1377,69 @@ namespace
                 memtest_event("wc: maps: %s", line);
             }
         }
+        // The map is chosen as the menu's own selection change would: the picture it requested (its map_index's) is
+        // released and the chosen map's requested, so its release on unloading is the chosen map's and balances.
+        // Setting map_index alone (and old_map_index from the options) left the first map's picture requested for
+        // good and released two it never asked for; back in the menu, the first map's bitmap still pointed into
+        // memory that a later picture took (bmcheck repaired it: wc1's mp_thumb_complex.tga, a hand session).
+        Wrecking_crew_options.old_map_index = menu_old_map_index;
+        if (menu_map_index != index)
+        {
+            if (menu_map_index >= 0 && menu_map_index < count)
+            {
+                ui_release_image(wrecking_crew_get_map_image_name(menu_map_index));
+            }
+            ui_request_image(wrecking_crew_get_map_image_name(index));
+        }
         Wrecking_crew_options.map_index = index;
         Wrecking_crew_options.current_challenge_id = -1;
         memtest_event("wc: starting %s (map %d of %d), mode %d, %d player(s), weapon %d, free play %d", Wc_map, index, count,
                       (int)Wrecking_crew_options.mode, Wrecking_crew_options.num_players, Wrecking_crew_options.weapon_index,
                       Wrecking_crew_options.free_play ? 1 : 0);
+        memtest_event("wc: before this load: big containers %.1f MB committed, far table %u entries", big_committed_mb(), far_entries());
         Wc_started_ms = now;
         wrecking_crew_match_begin();
     }
+
+    // Memtest.WcRepeat=N (OPENRFG_MEMTEST_WCREPEAT): N more rounds after the first. A round lasts Memtest.WcRoundS
+    // seconds (OPENRFG_MEMTEST_WCROUNDS, default 60) of the match, then quits to the main menu as the pause menu does,
+    // and --wc starts the match again: the level unloads and loads again (what it gives back, what it takes anew).
+    int Wc_repeats = -1;
+    bool Wc_menu_again = false;
+
+    void wc_repeat(unsigned long long now)
+    {
+        if (Wc_repeats < 0)
+        {
+            Wc_repeats = env_int("OPENRFG_MEMTEST_WCREPEAT", 0);
+        }
+        static const int round_s = env_int("OPENRFG_MEMTEST_WCROUNDS", 60);
+        if (Wc_repeats <= 0 || Wc_started_ms == 0 || gameseq_get_state() != GS_GAMEPLAY ||
+            now - Wc_started_ms < (unsigned long long)round_s * 1000ull)
+        {
+            return;
+        }
+        Wc_repeats--;
+        Wc_started = false;
+        Wc_started_ms = 0;
+        Wc_loaded_since = 0;
+        Wc_menu_again = true;
+        memtest_event("wc: round over (%d more): to the main menu; big containers %.1f MB committed, far table %u entries",
+                      Wc_repeats, big_committed_mb(), far_entries());
+        game_set_wc_shutdown(GS_MAINMENU);
+    }
+}
+
+bool memtest_wc_menu_again()
+{
+    if (!Wc_menu_again)
+    {
+        return false;
+    }
+    Wc_menu_again = false;
+    memtest_event("wc: main menu: Wrecking Crew again (after the level's unload: big containers %.1f MB committed, far table %u entries)",
+                  big_committed_mb(), far_entries());
+    return true;
 }
 
 // ---- lifecycle
@@ -1466,6 +1557,7 @@ void memtest_frame()
     wc_drive();
     report_scaling();
     const unsigned long long now = GetTickCount64();
+    wc_repeat(now);
     if (now - Last_census_ms >= Interval_ms)
     {
         Last_census_ms = now;

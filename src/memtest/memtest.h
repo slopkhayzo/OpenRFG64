@@ -16,7 +16,8 @@
 //   --memtest-dir DIR     where the census goes (default: OPENRFG_RUN_DIR, else the working directory)
 //   --exit-after S        end the process S seconds after a Wrecking Crew match has started (unattended runs)
 // Environment: OPENRFG_CONFIG_INI (config.ini path), OPENRFG_MEMTEST_INTERVALMS (census period, default 1000),
-// OPENRFG_MEMTEST_<budget> overrides (memtest_budget).
+// OPENRFG_MEMTEST_<budget> overrides (memtest_budget), OPENRFG_MEMTEST_WCREPEAT / WCROUNDS (--wc's match N more times,
+// each round S seconds, default 60, then back to the main menu: what a level's unload gives back).
 #pragma once
 
 #include <stddef.h>
@@ -50,6 +51,7 @@ uint64_t memtest_budget(const char* name, uint64_t default_bytes);
 // ---- the Wrecking Crew start
 const char* memtest_wc_map();                                          // --wc, or nullptr
 bool memtest_wc_continue();                                            // unattended: press the match's continue
+bool memtest_wc_menu_again();                                          // Memtest.WcRepeat: Wrecking Crew again from the main menu
 bool memtest_hide_hud();                                               // Memtest.NoHud=1: the world alone (map pictures)
 
 // ---- the Sledge layer

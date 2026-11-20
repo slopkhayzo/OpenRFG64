@@ -86,6 +86,13 @@ namespace
     // (multiplayer.md 2.3) before the multiplayer start-up binds the link's socket; a bad value is shown in a box.
     void command_line_main_menu()
     {
+        // memtest (src/memtest): a repeat (Memtest.WcRepeat) quit the match to this menu: Wrecking Crew again.
+        static unsigned long long Wc_menu_since = 0;
+        if (Main_menu_done && gameseq_get_state() == GS_MAINMENU && !gameseq_in_transition() && memtest_wc_menu_again())
+        {
+            Main_menu_done = false;
+            Wc_menu_since = 0;
+        }
         if (Main_menu_done || Multiplayer || gameseq_get_state() != GS_MAINMENU || gameseq_in_transition() || ui_is_msgbox_active(-2))
         {
             return;
@@ -95,7 +102,6 @@ namespace
         // Wrecking Crew menu then starts the match (memtest_frame).
         if (options.error[0] == '\0' && memtest_wc_map() != nullptr)
         {
-            static unsigned long long Wc_menu_since = 0;
             if (Wc_menu_since == 0)
             {
                 Wc_menu_since = now_ms();
