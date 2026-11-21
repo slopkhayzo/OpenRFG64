@@ -1255,8 +1255,8 @@ void lowLodInstanceRender(keen::GraphicsCommandWriter* pCommandWriter, TerrainRe
         const rl_material* material_p = terrain_material(pInstance->get_material_map()->get_material(blocks[b].material_map_idx));
         if (material_p == nullptr)
         {
-            // OpenRFG64-memtest fix: a handle that does not resolve (its material was left out of a full material
-            // library: ten avenues of 480 building types) skips its block instead of dereferencing null.
+            // Fix: a handle that does not resolve (its material was left out of a full material library: 2,560
+            // registered materials, a Sledge map of 480 building types) skips its block instead of dereferencing null.
             continue;
         }
         setMaterial(pCommandWriter, pContext, pass, material_p->get_material_data());

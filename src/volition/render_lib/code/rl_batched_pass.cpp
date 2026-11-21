@@ -156,9 +156,10 @@ bool sort_material_infos(const rl_batched_material_info& lhs, const rl_batched_m
 // materials that no longer fit are dropped (metrics warning 4). The hash is rebuilt over the sorted infos.
 void rl_batched_pass::partition_batched_instances()
 {
-    // OpenRFG64-memtest fix: add_material_stats counts past the buffer when the infos are full (rfg.exe clamps only in
-    // finalize_construction, after this): the sort and the loop went past the buffer's end, and a garbage info's mesh
-    // crashed the render thread (rl_mesh::get_uid, one avenue of 48 different buildings under the demolition).
+    // Fix: add_material_stats counts past the buffer when the infos are full, and rfg.exe clamps the count only in
+    // finalize_construction, after this: the sort and the loop below went past the buffer's end, and a garbage info's
+    // mesh crashed the render thread (rl_mesh::get_uid). Seen with more than 1,024 (material, mesh) pairs in view (a
+    // Sledge map of 48 different buildings under demolition).
     if (m_num_batched_materials > BATCHED_MATERIALS_MAX)
     {
         m_num_batched_materials = BATCHED_MATERIALS_MAX;
@@ -267,9 +268,10 @@ void rl_batched_pass::finalize_construction(rl_renderer& renderer)
             group.compiled_group = rl_compiled_render_group::create();
             if (group.compiled_group == nullptr)
             {
-                // OpenRFG64-memtest fix: the compiled groups' pool (1,024 in rfg.exe, growing in memtest:
-                // memtest_render_limits) ran out; render() draws a combining material's groups compiled only, so this
-                // one is left out of this frame (metrics warning 8, as for groups past the buffer) instead of a crash.
+                // Fix: the compiled groups' pool (1,024) ran out (a pass can hold 2,048 groups). render() draws a
+                // combining material's groups compiled only, so this one is left out of the frame (metrics warning 8,
+                // as for groups past the buffer) instead of dereferencing null. (memtest: the pool grows,
+                // memtest_render_limits.)
                 group.visibility_flags = 0;
                 rl_render_lib::get_instance()->m_metrics_p->set_warning_flag(8);
                 continue;

@@ -30,7 +30,7 @@ void heapBlockFree(void* p, unsigned int nbytes); // 0x00CE7810 (hkmemoryrouter.
 }
 
 // The memory size is the high half of hkReferencedObject::m_memSizeAndRefCount, the word after the vtable pointer:
-// +6 in rfg.exe. x64 (OpenRFG64-memtest): +10; +6 read the vtable pointer's top bytes (0), so every Havok object
+// +6 in rfg.exe. x64: +10; +6 read the vtable pointer's top bytes (0), so every Havok object
 // deleted was freed with size 0 and never given back (a level's millions of shapes, every debris body).
 #define HK_DECLARE_CLASS_ALLOCATOR(...) \
     static void* operator new(size_t nbytes) { return hkMemory::heapBlockAlloc((unsigned int)nbytes); } \

@@ -1120,9 +1120,9 @@ void rl_scene_renderer::render_deferred_list(rl_renderer& renderer, rl_camera& c
 void rl_scene_renderer::render_deferred(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_shadow_render_parameters& shadow_render_params, const unsigned int vis_flags, const float fade_range, const bool skip_decals, const bool alpha_blend, const bool msaa_enabled)
 {
     rl_particle_renderer::get_instance()->reset_deferred();
-    // OpenRFG64-memtest fix: the adds count past a full list (they write up to its capacity less one); rfg.exe then
-    // sorted and drew past the array's end, and a garbage entry crashed the frame (render_deferred_list,
-    // get_distortion_only: ten avenues). Only the written entries now.
+    // Fix: the adds count past a full list (they write up to its capacity less one); rfg.exe then sorted and drew that
+    // many, past the array's end, and a garbage entry crashed the frame (render_deferred_list, get_distortion_only:
+    // more than 9,216 alpha-blended parts in view, a Sledge map with a glass pane per window). Only what was written.
     if (m_num_deferred_sort_entries > (unsigned int)DEFERRED_SORT_MAX - 1)
     {
         m_num_deferred_sort_entries = DEFERRED_SORT_MAX - 1;
