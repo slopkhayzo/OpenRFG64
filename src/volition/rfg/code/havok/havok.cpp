@@ -2030,7 +2030,6 @@ static void havok_sim_islands_process_post()
 // Steps the world at 1/60 s as many times as the accumulated frame time allows (or once by the frame time with
 // Havok_use_single_step), keeps the remainder, computes the render interpolation factor, then post-processes the
 // islands, ragdolls, collision events, replaced collision models and object transforms.
-static float dbgH(const hkHalf& h){ unsigned short x; memcpy(&x,&h,2); unsigned int u=(unsigned int)x<<16; float f; memcpy(&f,&u,4); return f; }
 void havok_simulate()
 {
     Havok_world_is_simulating = true;
@@ -2061,8 +2060,6 @@ void havok_simulate()
     Havok_interpolate_percent = (((float)Havok_num_steps_this_frame * Havok_step_time + leftover) - Havok_step_time_leftover_last) /
                                 ((float)(Havok_num_steps_this_frame + 1) * Havok_step_time - Havok_step_time_leftover_last);
     Havok_step_time_leftover = leftover;
-    { static int dbgF=0; if ((dbgF++ % 90)==0) { extern void openrfg_log(const char*); char b[400]; hkpWorld* w=Havok_world; int na=w->m_activeSimulationIslands.getSize(); int ni=w->m_inactiveSimulationIslands.getSize(); sprintf(b,"DBGPHY steps=%d interp=%f left=%f ftime=%f active_isl=%d inactive_isl=%d",Havok_num_steps_this_frame,Havok_interpolate_percent,Havok_step_time_leftover,Frametime,na,ni); openrfg_log(b);
-      for(int i=0;i<na&&i<4;i++){ hkpSimulationIsland* is=w->m_activeSimulationIslands[i]; for(int e=0;e<is->m_entities.getSize()&&e<2;e++){ hkpEntity* en=is->m_entities[e]; const hkVector4f& v=en->getMotion()->getLinearVelocity(); const hkVector4f& pp=en->getMotion()->getPosition(); sprintf(b,"DBGPHY  isl%d ent%d n=%d mt=%d pos=(%.2f %.2f %.2f) vel=(%.3f %.3f %.3f) mass=%f",i,e,is->m_entities.getSize(),(int)en->getMotion()->m_type.m_storage,pp(0),pp(1),pp(2),v(0),v(1),v(2),en->getMotion()->getMass()); openrfg_log(b); { hkMotionState& ms=en->getMotion()->m_motionState; const hkSweptTransformf& sw=ms.getSweptTransform(); sprintf(b,"DBGPHY2 com1=(%.2f %.2f %.2f) com0=(%.2f %.2f %.2f) tf=%f maxlin=%f maxang=%f lindamp=%f",sw.m_centerOfMass1(0),sw.m_centerOfMass1(1),sw.m_centerOfMass1(2),sw.m_centerOfMass0(0),sw.m_centerOfMass0(1),sw.m_centerOfMass0(2),dbgH(ms.m_timeFactor),(float)ms.m_maxLinearVelocity,(float)ms.m_maxAngularVelocity,dbgH(ms.m_linearDamping)); openrfg_log(b); } } } } }
     havok_sim_islands_process_post();
     havok_ragdoll_process_post();
     havok_collision_events_end_sim();

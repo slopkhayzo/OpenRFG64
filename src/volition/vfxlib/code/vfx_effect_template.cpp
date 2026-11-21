@@ -43,14 +43,15 @@ RL_FACTORY_CLASS_IMPLEMENTATION(vfx_effect_template, 0xE17C8FA5, 350)
 template<typename T>
 static void vfx_fixup(et_sized_native_pointer<T>& pointer, vfx_effect_template::vfx_data* vfx_data_p)
 {
-    T* const offset = pointer.to_pointer();
-    if (offset == (T*)0xFFFFFFFF || offset == nullptr)
+    // x64: the file slot is 8 bytes but holds a 32-bit offset; ignore whatever sits in the upper half.
+    const unsigned int offset32 = (unsigned int)(uintptr_t)pointer.to_pointer();
+    if (offset32 == 0xFFFFFFFFu || offset32 == 0u)
     {
         pointer = (T*)nullptr;
     }
     else
     {
-        pointer = (T*)((char*)vfx_data_p + (int)offset);
+        pointer = (T*)((char*)vfx_data_p + (int)offset32);
     }
 }
 
@@ -61,7 +62,7 @@ static void vfx_fixup_self_relative(et_ptr_offset<T, NULLABLE>& pointer, vfx_eff
     const int offset = pointer.get_offset();
     if (offset != -1)
     {
-        pointer.set_offset((int)vfx_data_p + offset - (int)&pointer);
+        pointer.set_offset((int)((intptr_t)((char*)vfx_data_p + offset) - (intptr_t)&pointer));
     }
 }
 

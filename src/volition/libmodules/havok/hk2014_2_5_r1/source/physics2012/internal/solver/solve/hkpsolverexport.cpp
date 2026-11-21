@@ -10,6 +10,7 @@
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics2012/internal/solver/solve/hkpsolverexport.h"
 
 #include <math.h>
+#include <stdio.h>
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/system/error/hkerror.h"
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/physics/constraintsolver/accumulator/hkpvelocityaccumulator.h"
@@ -21,8 +22,28 @@
 
 using namespace hkSolverSse;
 
+void openrfg_log(const char*);
+
 namespace
 {
+// x64 safety: a friction schema's results pointer that is null or a -1 sentinel (stale or overwritten schema data) crashed the
+// solver export after a vehicle collision. The data only warm-starts the next step, so skipping that constraint is harmless.
+bool frictionInfoValid(const void* info, const char* what)
+{
+    const unsigned long long v = (unsigned long long)(const char*)info;
+    if (v >= 0x10000ull && v < 0x00007FFFFFFF0000ull)
+    {
+        return true;
+    }
+    static int s_reports = 0;
+    if (s_reports++ < 5)
+    {
+        char msg[96];
+        _snprintf(msg, sizeof(msg), "DBGSOLVEX bad %s results pointer %016llX", what, v);
+        openrfg_log(msg);
+    }
+    return false;
+}
 __forceinline Q loadQ(const void* p) { return _mm_load_ps(static_cast<const float*>(p)); }
 
 // the summed velocity along a 1 linear 2 angular row: hadd3(((A.sumAng * ang0) + (B.sumAng * ang1)) + lin * dSumLin)
@@ -251,6 +272,12 @@ void hkSolverExport::exportImpulsesAndRhs(const hkpSolverInfo& info, const hkpSo
             const Q scale = splat(temps[2].m_impulseApplied);
             const Q dSumLin = _mm_sub_ps(mA->m_scratch0.m_quad, mB->m_scratch0.m_quad);
             hkpSimpleContactConstraintDataInfoInternal* frictionInfo = reinterpret_cast<hkpSimpleContactConstraintDataInfoInternal*>(friction->m_solverResults);
+            if (!frictionInfoValid(frictionInfo, "2d friction"))
+            {
+                temps += 3;
+                schema += hkpJacobianSchemaInfo::Friction2D::Sizeof;
+                break;
+            }
             frictionInfo->m_rhsLin[0] = lane0(_mm_mul_ps(splat(nextRhs(jac0[3], dampFrictionDt, rowSumVelocity(jac0, dSumLin, mA, mB), numStepsDt)), scale));
             frictionInfo->m_rhsLin[1] = lane0(_mm_mul_ps(splat(nextRhs(jac1[3], dampFrictionDt, rowSumVelocity(jac1, dSumLin, mA, mB), numStepsDt)), scale));
             const float t0 = temps[0].m_impulseApplied;
@@ -270,6 +297,12 @@ void hkSolverExport::exportImpulsesAndRhs(const hkpSolverInfo& info, const hkpSo
             const Q scale = splat(temps[3].m_impulseApplied);
             const Q dSumLin = _mm_sub_ps(mA->m_scratch0.m_quad, mB->m_scratch0.m_quad);
             hkpSimpleContactConstraintDataInfoInternal* frictionInfo = reinterpret_cast<hkpSimpleContactConstraintDataInfoInternal*>(friction->m_solverResults);
+            if (!frictionInfoValid(frictionInfo, "3d friction"))
+            {
+                temps += 4;
+                schema += hkpJacobianSchemaInfo::Friction3D::Sizeof;
+                break;
+            }
             const Q v2 = hadd3(_mm_add_ps(_mm_mul_ps(loadQ(jac2 + 4), mB->m_scratch1.m_quad), _mm_mul_ps(mA->m_scratch1.m_quad, loadQ(jac2))));
             const float rhs2 = lane0(_mm_mul_ps(splat(nextRhs(jac2[7], dampFrictionDt, v2, numStepsDt)), scale));
             frictionInfo->m_rhsLin[0] = lane0(_mm_mul_ps(splat(nextRhs(jac0[3], dampFrictionDt, rowSumVelocity(jac0, dSumLin, mA, mB), numStepsDt)), scale));
@@ -303,6 +336,12 @@ void hkSolverExport::exportImpulsesAndRhs(const hkpSolverInfo& info, const hkpSo
             HK_ALIGN16(short h[8]);
             _mm_store_si128(reinterpret_cast<__m128i*>(h), halves);
             hkpSimpleContactConstraintDataInfoInternal* frictionInfo = reinterpret_cast<hkpSimpleContactConstraintDataInfoInternal*>(rolling->m_solverResults);
+            if (!frictionInfoValid(frictionInfo, "rolling friction"))
+            {
+                temps += 3;
+                schema += hkpJacobianSchemaInfo::RollingFriction2D::Sizeof;
+                break;
+            }
             short* infoHalves = reinterpret_cast<short*>(frictionInfo);
             infoHalves[3] = h[0]; // m_rollingImpulseSqr
             infoHalves[4] = h[1]; // m_rhsRolling[0]

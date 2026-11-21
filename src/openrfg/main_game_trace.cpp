@@ -44,9 +44,9 @@ namespace
         // Magic number: an access violation's parameters are the kind (0 read, 1 write, 8 execute) and the address.
         if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && record->NumberParameters >= 2)
         {
-            snprintf(access, sizeof(access), " kind=%u address=0x%08X", (unsigned int)record->ExceptionInformation[0], (unsigned int)record->ExceptionInformation[1]);
+            snprintf(access, sizeof(access), " kind=%u address=0x%llX", (unsigned int)record->ExceptionInformation[0], (unsigned long long)record->ExceptionInformation[1]);
         }
-        GAME_TRACE("crash", "exception 0x%08X at 0x%08X (%s + 0x%X) thread=%u%s", (unsigned int)record->ExceptionCode, (unsigned int)(uintptr_t)record->ExceptionAddress,
+        GAME_TRACE("crash", "exception 0x%08X at 0x%llX (%s + 0x%X) thread=%u%s", (unsigned int)record->ExceptionCode, (unsigned long long)(uintptr_t)record->ExceptionAddress,
                    slash != nullptr ? slash + 1 : path, (unsigned int)((uintptr_t)record->ExceptionAddress - (uintptr_t)module), (unsigned int)GetCurrentThreadId(), access);
         return Previous_filter != nullptr ? Previous_filter(pointers) : EXCEPTION_CONTINUE_SEARCH;
     }

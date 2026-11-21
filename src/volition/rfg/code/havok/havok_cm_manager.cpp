@@ -1,4 +1,3 @@
-void openrfg_log(const char*);
 #include <stdio.h>
 // Original: volition/rfg/code/havok/havok_cm_manager.cpp
 //
@@ -183,12 +182,10 @@ bool havok_cm_manager_load_all(unsigned int* cm_chunk_size, const void* source_b
     // resource->stealContents<hkpListShape>(), inlined
     hkTypeInfoRegistry* loaded_registry = hkBuiltinTypeRegistry::getInstance().getLoadedObjectRegistry();
     hkpListShape* list = (hkpListShape*)resource->stealContentsPointer(hkpListShape::staticClass().getName(), loaded_registry);
-    { char dbg[160]; sprintf(dbg, "DBGCM %s file_models=%u children=%d disabled=%d", asset_name ? asset_name : "?", num_models, (int)list->getNumChildShapes(), (int)list->m_numDisabledChildren); openrfg_log(dbg); }
     for (int i = 0; i < list->getNumChildShapes() + list->m_numDisabledChildren; i++)
     {
         const hkpShape* collision_model = list->m_childInfo[i].m_shape;
         const unsigned int cm_index = havok_cm_manager_add(collision_model);
-        if (i < 4 || i >= 26) { char dbg[160]; sprintf(dbg, "DBGCM  i=%d shape=%p idx=%08X", i, (const void*)collision_model, cm_index); openrfg_log(dbg); }
         if (cm_indices != nullptr && cm_index != 0xFFFFFFFF)
         {
             cm_indices[i] = cm_index;

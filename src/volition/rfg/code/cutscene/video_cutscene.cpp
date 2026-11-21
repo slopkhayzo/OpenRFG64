@@ -333,21 +333,6 @@ static void video_cutscene_subtitle_process()
 // 0x0070A070 (:420)
 static void video_cutscene_play_process()
 {
-    { // DBGVC temp
-        extern void openrfg_log(const char*);
-        static int dbgn = 0;
-        if ((dbgn++ % 300) == 0 && dbgn < 3000)
-        {
-            char b[256];
-            sprintf(b, "DBGVC gpu=%d cpu=%d exiting=%d about=%d pers=%d subreq=%u paused=%d fade=%d busy=%d handle=%d", Video_cutscene_gpu_mempool != nullptr, Video_cutscene_cpu_mempool != nullptr, (int)Video_cutscene_exiting, (int)Video_cutscene_about_to_exit, (int)Required_personas.size(), (unsigned)Video_cutscene_subtitle_req, (int)Video_cutscene_is_paused, (int)Waiting_for_fade, (int)stream2_q_busy(), (int)Video_cutscene_bink_handle);
-            openrfg_log(b);
-            for (int k = 0; k < Required_personas.size(); k++)
-            {
-                sprintf(b, "DBGVC persona %d ptr=%p loaded=%d loading=%d", k, (void*)Required_personas[k], (int)Required_personas[k]->is_loaded(), (int)Required_personas[k]->is_loading());
-                openrfg_log(b);
-            }
-        }
-    }
     if (Video_cutscene_gpu_mempool == nullptr || Video_cutscene_exiting || Video_cutscene_about_to_exit)
     {
         ui_process(Video_cutscene_control_id, false);

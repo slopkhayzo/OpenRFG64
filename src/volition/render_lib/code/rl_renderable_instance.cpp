@@ -64,7 +64,7 @@ rl_renderable_instance::~rl_renderable_instance()
                 do { if ((uintptr_t)d->next < 0x10000 || (uintptr_t)d->prev < 0x10000 || d->get_owner() != this || d->next->prev != d) { bad = true; break; }
                      d = d->next; } while (d != h && ++n < 100000); }
         }
-        if (bad) { extern void openrfg_log(const char*); openrfg_log("DBGDECALDTOR: bad decal list in destructor, ignored"); m_decal_list = nullptr; }
+        if (bad) { m_decal_list = nullptr; }
     }
     rl_decal* decal_p = m_decal_list;
     while (decal_p != nullptr)

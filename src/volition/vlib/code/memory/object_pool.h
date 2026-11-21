@@ -128,7 +128,7 @@ public:
 
 private:
     static const unsigned int memory_footprint; // <weapon,256,1> 0x0133AEB0
-    unsigned char data[N * (sizeof(T) + sizeof(index_link) + sizeof(unsigned char))]; // 0x40 for K == 1
+    alignas(alignof(T) < 16 ? 16 : alignof(T)) unsigned char data[N * (sizeof(T) + sizeof(index_link) + sizeof(unsigned char))]; // 0x40 for K == 1
 };
 
 #include "volition/vlib/code/memory/object_pool.inl"

@@ -73,7 +73,7 @@ bool object_pool_server<T>::can_alloc() const
 template<typename T>
 bool object_pool_server<T>::contains(const T* objp) const
 {
-    return (unsigned int)(objp - base) < max_capacity;
+    return (size_t)(objp - base) < (size_t)max_capacity; // OpenRFG: 64-bit ptrdiff (was truncated to 32 bits)
 }
 
 // <split_memblk> 0x005960B0 (.h:63)

@@ -227,6 +227,7 @@ havok_memory_listener::~havok_memory_listener()
 {
 }
 
+void openrfg_log(const char*);
 // 0x0083C120 (:368)
 // The large block allocator is out of memory: free what the game can spare.
 void havok_memory_listener::cannotAllocate(unsigned int size)
@@ -238,7 +239,6 @@ void havok_memory_listener::cannotAllocate(unsigned int size)
 
 // 0x0083C1C0 (:414)
 // Out of memory even after cannotAllocate: report and hang rather than crash.
-void openrfg_log(const char*);
 void havok_memory_listener::allocationFailure(unsigned int size)
 {
     openrfg_log("DBGHAVOKFAIL allocationFailure entered"); // DBGHAVOKFAIL

@@ -124,6 +124,14 @@ bool sort_material_infos(const rl_batched_material_info& lhs, const rl_batched_m
 // materials that no longer fit are dropped (metrics warning 4). The hash is rebuilt over the sorted infos.
 void rl_batched_pass::partition_batched_instances()
 {
+    // Fix: add_material_stats counts past the buffer when the infos are full, and rfg.exe clamps the count only in
+    // finalize_construction, after this: the sort and the loop below went past the buffer's end, and a garbage info's
+    // mesh crashed the render thread (rl_mesh::get_uid). Seen with more than 1,024 (material, mesh) pairs in view (a
+    // Sledge map of 48 different buildings under demolition).
+    if (m_num_batched_materials > BATCHED_MATERIALS_MAX)
+    {
+        m_num_batched_materials = BATCHED_MATERIALS_MAX;
+    }
     std::sort(m_batched_materials, m_batched_materials + m_num_batched_materials, sort_material_infos);
     m_batched_material_hash->clear();
     unsigned int first_instance = 0;
@@ -226,6 +234,15 @@ void rl_batched_pass::finalize_construction(rl_renderer& renderer)
         if (rl_material_library_can_combine_drawcalls(group.material_handle))
         {
             group.compiled_group = rl_compiled_render_group::create();
+            if (group.compiled_group == nullptr)
+            {
+                // Fix: the compiled groups' pool (1,024) ran out (a pass can hold 2,048 groups). render() draws a
+                // combining material's groups compiled only, so this one is left out of the frame (metrics warning 8,
+                // as for groups past the buffer) instead of dereferencing null.
+                group.visibility_flags = 0;
+                rl_render_lib::get_instance()->m_metrics_p->set_warning_flag(8);
+                continue;
+            }
             group.compiled_group->build(renderer, &group, m_transform_stream);
         }
         else

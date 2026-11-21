@@ -438,7 +438,6 @@ void item_high_res_stream_unload(unsigned int srid)
     }
 }
 
-void openrfg_log(const char*);
 // 0x00A18D30 (:2421)
 item_info* object_item_get_info(const char* name)
 {

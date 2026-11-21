@@ -37,6 +37,7 @@
 
 #include "keen/base/memory.hpp"
 
+#include <chrono> // DBGSTRT
 #include <stdio.h>
 #include <string.h>
 
@@ -239,9 +240,22 @@ bool stream2_container::abort_wait()
     return true;
 }
 
+// DBGSTRT: per container timing (the queue handles one container at a time). Logged by stream_wait as category "strt".
+using strt_clock = std::chrono::steady_clock;
+static strt_clock::time_point s_tStart, s_tIssue, s_tReadDone, s_tSignal, s_tThreadDone;
+static bool s_tReadSeen = false;
+static bool s_tSignalSeen = false;
+static long strt_us(strt_clock::time_point a, strt_clock::time_point b)
+{
+    return (long)std::chrono::duration_cast<std::chrono::microseconds>(b - a).count();
+}
+
 // 0x004AF7C0 (:309)
 bool stream2_container::stream(bool do_alloc)
 {
+    s_tStart = strt_clock::now();
+    s_tReadSeen = false;
+    s_tSignalSeen = false;
     if (do_alloc && !alloc())
     {
         flags = (short)((flags & ~0x8) | 0x40);
@@ -330,6 +344,7 @@ bool stream2_container::stream(bool do_alloc)
         pf_chain_read_dest[0] = (void*)stream2_os_read(file);
     }
     flags |= 0x8;
+    s_tIssue = strt_clock::now();
     return true;
 }
 
@@ -341,6 +356,11 @@ bool stream2_container::stream_wait()
     {
         return true;
     }
+    if (!s_tReadSeen)
+    {
+        s_tReadSeen = true;
+        s_tReadDone = strt_clock::now();
+    }
     if (status == SOS_DONE_ERROR)
     {
         req_abort();
@@ -348,6 +368,8 @@ bool stream2_container::stream_wait()
     if (g_pStream2ContainerToLoad == nullptr)
     {
         // Let the loading thread run the load_threaded callbacks first.
+        s_tSignal = strt_clock::now();
+        s_tSignalSeen = true;
         g_stream2ContainerLoaded = false;
         g_pStream2ContainerToLoad = this;
         g_stream2ContainerLoadEvent.signal();
@@ -357,6 +379,7 @@ bool stream2_container::stream_wait()
     {
         if (g_stream2ContainerLoaded)
         {
+            s_tThreadDone = strt_clock::now();
             bool failed = false;
             for (int i = 0; i < num_entries; i++)
             {
@@ -397,6 +420,17 @@ bool stream2_container::stream_wait()
             }
             flags &= ~0x8;
             g_pStream2ContainerToLoad = nullptr;
+            if (Game_trace_file != nullptr && s_tSignalSeen)
+            {
+                const strt_clock::time_point tEnd = strt_clock::now();
+                const long total = strt_us(s_tStart, tEnd);
+                if (total >= 30000)
+                {
+                    GAME_TRACE("strt", "%s total=%ldms alloc=%ld read=%ld hand=%ld thread=%ld main=%ld (ms)", name ? name : "?", total / 1000,
+                               strt_us(s_tStart, s_tIssue) / 1000, strt_us(s_tIssue, s_tReadDone) / 1000, strt_us(s_tReadDone, s_tSignal) / 1000,
+                               strt_us(s_tSignal, s_tThreadDone) / 1000, strt_us(s_tThreadDone, tEnd) / 1000);
+                }
+            }
             return false;
         }
     }
@@ -992,7 +1026,7 @@ void stream2_container::get_structure_size(unsigned int& cpu_size, bool count_pr
     if ((flags & 0x100) == 0)
     {
         cpu_size = (unsigned int)align_up((int)(cpu_size + pf_chain_size * 4), 4);
-        cpu_size = (unsigned int)align_up((int)(cpu_size + 4 + pf_chain_size * 4), 4);
+        cpu_size = (unsigned int)align_up((int)(cpu_size + 8 + (pf_chain_size + 1) * sizeof(void*)), 4); // x64: read_dest is void*[chain+1] (8-aligned)
     }
     if (cdef->mode == SCM_CONTAINER)
     {

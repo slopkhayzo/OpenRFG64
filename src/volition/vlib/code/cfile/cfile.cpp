@@ -810,13 +810,13 @@ unsigned int cf_read_compressed_chain(unsigned char** chain_dest_buf, unsigned i
     switch (p_cfile->m_access_type)
     {
     case CF_IO_ACCESS_STANDARD:
-        num_read = keen_cf_read_compressed_chain(chain_dest_buf, total_compressed_bytes_to_read, chain_num_bytes, p_cfile->m_standard_fp, p_cfile->m_media_type, p_cfile->pos);
+        num_read = keen_cf_read_compressed_chain(chain_dest_buf, total_compressed_bytes_to_read, chain_num_bytes, p_cfile->m_standard_fp, p_cfile->m_media_type, p_cfile->pos, (unsigned int)chain_num_reads);
         break;
     case CF_IO_ACCESS_PACKFILE:
     {
         keen_cf_packfile_handle* pfp = p_cfile->m_packfile_fp;
         const uint64_t file_pos = (uint64_t)pfp->packfile_entry->sector * 0x800 + p_cfile->pos;
-        num_read = keen_cf_read_compressed_chain(chain_dest_buf, total_compressed_bytes_to_read, chain_num_bytes, pfp->file_handle, p_cfile->m_media_type, file_pos);
+        num_read = keen_cf_read_compressed_chain(chain_dest_buf, total_compressed_bytes_to_read, chain_num_bytes, pfp->file_handle, p_cfile->m_media_type, file_pos, (unsigned int)chain_num_reads);
         break;
     }
     case CF_IO_ACCESS_MEMORY:

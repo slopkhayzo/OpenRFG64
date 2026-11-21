@@ -233,6 +233,7 @@ private:
     float last_spawn_time; // 0xEC
     float current_anim_time; // 0xF0
     bool m_first_update; // 0xF4
+    bool m_snap_spawn = true; // OpenRFG: first spawn starts at the real position (stale first-update matrix made 50-unit particle streaks)
     bool m_emission_rate_calculated; // 0xF5
     float m_emission_rate_cached; // 0xF8
     int m_emit_number; // 0xFC

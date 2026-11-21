@@ -745,7 +745,6 @@ patrol_node_handle object_patrol::get_next_patrol_point_handle(const patrol_node
         return root_node_handle;
     }
     patrol_node_handle next;
-    { static int s_d = 0; if (s_d++ < 40) { extern void openrfg_log(const char*); char b[600]; int n = snprintf(b, sizeof(b), "DBGPATROL h=%x cur=%x loop=%d rev=%d size=%d list:", get_handle(), node_handle.nav_handle, (int)patrol_flags.looping_patrol, (int)node_handle.node_flags.reverse, (int)nav_list.size()); for (int i = 0; i < nav_list.size() && n < 540; i++) n += snprintf(b + n, sizeof(b) - n, " %x(l%d)", nav_list[i]->get_handle(), (int)nav_list[i]->num_links); openrfg_log(b); } }
     if (patrol_flags.looping_patrol)
     {
         next = pick_next_node_looping(get_handle(), index, nav_list);

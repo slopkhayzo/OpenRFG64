@@ -337,7 +337,7 @@ add_library(vlib STATIC
     ${OPENRFG_SRC}/game/build/win32/steam/master/unity_sources/vlib_unity.cpp
 )
 # stub_impl.md S3: wtsapi32 for os.cpp (the session notifications of the vlib window)
-target_link_libraries(vlib PUBLIC keen_base keen_input openrfg_zlib wtsapi32)
+target_link_libraries(vlib PUBLIC keen_base keen_input openrfg_zlib openrfg_libdeflate wtsapi32)
 target_compile_definitions(vlib PUBLIC OPENRFG_EXTERNAL_ZLIB)
 
 # ---- Volition stream2 (streaming system)

@@ -81,7 +81,7 @@ void vfx_effect_manager::init()
     for (int i = 0; i < max_effects; i++)
     {
         // Magic number: 0xD0 = sizeof(vfx_effect), 4 = the alignment rfg.exe asks for.
-        effects_freelist[i] = (vfx_effect*)pool->alloc(sizeof(vfx_effect), 4);
+        effects_freelist[i] = (vfx_effect*)pool->alloc(sizeof(vfx_effect), 16); // x64: vfx_effect is alignas(16)
     }
     effects_registered.init((vfx_effect**)pool->alloc(max_effects * sizeof(vfx_effect*), 0), max_effects, 0);
     effect_templates.init((vfx_effect_template**)pool->alloc(max_effect_templates * sizeof(vfx_effect_template*), 0), max_effect_templates, 0);

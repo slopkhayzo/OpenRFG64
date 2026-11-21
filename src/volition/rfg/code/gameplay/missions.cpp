@@ -191,7 +191,7 @@ void mission_reclaim_charges_and_mines_impl(player* pp, weapon* mine_weapon, wea
         else if (weapon_class == WEAPON_CLASS_SINGULARITY_BOMB && !proj->ca_time_offset_stamp.valid() && !proj->obj_flags.destroyed && pp->get_handle() == proj->owner_handle)
         {
             World.destroy_object(proj, false);
-            if ((float)proj->age_timer.time_since() <= *(const float*)((const char*)proj->w_info + 0x204))
+            if ((float)proj->age_timer.time_since() <= proj->w_info->projectile_info.time_until_propelled)
             {
                 if (singularity_weapon != nullptr)
                 {

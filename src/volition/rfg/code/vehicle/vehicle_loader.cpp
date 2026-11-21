@@ -1,4 +1,3 @@
-void openrfg_log(const char*);
 #include <stdio.h>
 // Original: volition/rfg/code/vehicle/vehicle_loader.cpp
 //
@@ -95,8 +94,6 @@ static bool vehicle_load_collision_models(vehicle_subinfo* subinfo, const char* 
         return false;
     }
 
-    { char dbg[200]; sprintf(dbg, "DBGVEH load %s num_cms=%u chunk=%u subcm=%08X ncomp=%u", filename, num_cms, chunk_size, subinfo->m_cm_dynamics_info.m_cm_index, subinfo->m_num_components); openrfg_log(dbg);
-      for (unsigned int k = 0; k < subinfo->m_num_components && k < 40; k++) { sprintf(dbg, "DBGVEH  rawcomp %u cm=%08X", k, subinfo->m_components[k].m_cm_dynamics_info.m_cm_index); openrfg_log(dbg); } }
     if (subinfo->m_cm_dynamics_info.m_cm_index != VEHICLE_CM_INDEX_NONE) {
         subinfo->m_cm_dynamics_info.m_cm_index = cm_indices[subinfo->m_cm_dynamics_info.m_cm_index];
     }
@@ -149,8 +146,6 @@ static bool vehicle_unload_collision_models(vehicle_subinfo* subinfo)
     if (subinfo == NULL) {
         return false;
     }
-    { char dbg[200]; sprintf(dbg, "DBGVEH unload cm=%08X ncomp=%u sz_info=%u sz_comp=%u", subinfo->m_cm_dynamics_info.m_cm_index, subinfo->m_num_components, (unsigned)sizeof(vehicle_cm_dynamics_info), (unsigned)sizeof(vehicle_component_data)); openrfg_log(dbg);
-      for (unsigned int k = 0; k < subinfo->m_num_components && k < 64; k++) { sprintf(dbg, "DBGVEH comp %u cm=%08X", k, subinfo->m_components[k].m_cm_dynamics_info.m_cm_index); openrfg_log(dbg); } }
     havok_cm_manager_remove_from_list(subinfo->m_cm_dynamics_info.m_cm_index);
     for (unsigned int i = 0; i < subinfo->m_num_components; i++) {
         havok_cm_manager_remove_from_list(subinfo->m_components[i].m_cm_dynamics_info.m_cm_index);

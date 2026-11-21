@@ -29,6 +29,7 @@
 // - localized_packfile_init returns false (no packfile added) for an audio language outside the table.
 
 #include "volition/rfg/code/gamewide/game_trace.h" // DBGSTRA
+#include <chrono> // DBGBOOTT
 #include "volition/rfg/code/rfg.h"
 
 #include "keen/base/language.hpp"
@@ -652,13 +653,24 @@ void rfg_init_stage_2_prepare()
 }
 
 // The boot timers of rfg_init_stage_2_done: timer_get before each system with the indent raised.
-#define BOOT_TIMED(call)               \
-    do                                 \
-    {                                  \
-        timer_get(TIMER_MILLISECONDS); \
-        Load_timer_indent += 2;        \
-        call;                          \
-        Load_timer_indent -= 2;        \
+// DBGBOOTT: logs every boot system that takes 10 ms or more (category "boottime", only with --game-trace).
+static void boot_timed_report(const char* what, std::chrono::steady_clock::time_point t0)
+{
+    const long us = (long)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count();
+    if (us >= 10000)
+    {
+        GAME_TRACE("boottime", "%ld ms  %s", us / 1000, what);
+    }
+}
+#define BOOT_TIMED(call)                                          \
+    do                                                            \
+    {                                                             \
+        const auto bt0_ = std::chrono::steady_clock::now();       \
+        timer_get(TIMER_MILLISECONDS);                            \
+        Load_timer_indent += 2;                                   \
+        call;                                                     \
+        Load_timer_indent -= 2;                                   \
+        boot_timed_report(#call, bt0_);                           \
     } while (0)
 
 // The systems of rfg_init_stage_2_done in blocks; each block runs only while the boot is not being abandoned.
@@ -684,12 +696,14 @@ static bool boot_stage_2_systems(keen::SoundSystem::System* pSoundSystem)
         // The always loaded bitmaps.
         char base[0x44];
         char filename[0x44];
+        const auto bt0_ = std::chrono::steady_clock::now();
         timer_get(TIMER_MILLISECONDS);
         Load_timer_indent += 2;
         cf_drop_ext(base, 0x40, "always_loaded");
         cf_add_ext(filename, 0x40, base, Peg_platform_ext[0], false); // the first entry (all are ".cpeg_pc")
         bm_load_peg(filename, &Permanent_mempool, true);
         Load_timer_indent -= 2;
+        boot_timed_report("always_loaded peg", bt0_);
     }
     BOOT_TIMED(gameaudio_system_init_stage_2(&Rfg_audio_scratch_keen_allocator, &Rfg_audio_bank_keen_allocator, pSoundSystem));
     if (Game_boot_exit_flag)
@@ -717,6 +731,7 @@ static bool boot_stage_2_systems(keen::SoundSystem::System* pSoundSystem)
         return false;
     }
     BOOT_TIMED(projectile_system_init());
+    const auto bte_ = std::chrono::steady_clock::now();
     timer_get(TIMER_MILLISECONDS);
     Load_timer_indent += 2;
     if (Use_packfiles || Game_preload)
@@ -729,6 +744,7 @@ static bool boot_stage_2_systems(keen::SoundSystem::System* pSoundSystem)
         effects_preload_packfile_finish();
     }
     Load_timer_indent -= 2;
+    boot_timed_report("effects preload + effects_system_init", bte_);
     BOOT_TIMED(camera_system_init());
     BOOT_TIMED(rfg_materials_system_init(false, nullptr));
     BOOT_TIMED(object_system_init());
@@ -808,6 +824,7 @@ static bool boot_stage_2_systems(keen::SoundSystem::System* pSoundSystem)
     BOOT_TIMED(gamewide_system_init());
     BOOT_TIMED(nav_cell_system_init());
     BOOT_TIMED(game_clock_init());
+    const auto bta_ = std::chrono::steady_clock::now();
     timer_get(TIMER_MILLISECONDS);
     Load_timer_indent += 2;
     if (!Use_packfiles && !Game_preload)
@@ -822,6 +839,7 @@ static bool boot_stage_2_systems(keen::SoundSystem::System* pSoundSystem)
     }
     cloth_sim_system_init(-1);
     Load_timer_indent -= 2;
+    boot_timed_report("anim packfile + cloth_sim_system_init", bta_);
     if (Game_boot_exit_flag)
     {
         return false;

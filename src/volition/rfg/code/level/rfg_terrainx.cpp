@@ -32,6 +32,7 @@
 #include "volition/render_lib/code/rl_mesh.h"
 #include "volition/render_lib/code/rl_mesh_data.h"
 #include "volition/render_lib/code/rl_shader_defines.h"
+#include "volition/render_lib/code/rl_skirt_mesh_instance.h"
 #include "volition/rfg/code/destruction/rfg_materials.h"
 #include "volition/rfg/code/game_render_terrain.h"
 #include "volition/rfg/code/havok/havok.h"
@@ -183,7 +184,7 @@ bool terrain_instantiate_subzone(rfg_terrain_subzone* terrain_subzone_p, terrain
         }
     }
     // The skirts of the stitch pieces render with the terrain's material map (rl_skirt_mesh_instance::m_terrain_material_map,
-    // private, written at its offset 0x120 as the original does).
+    // set through its setter; the original wrote offset 0x120, which is not the field's offset in the 64-bit layout).
     for (int i = 0; i < subzone_data_p->num_stitch_pieces; i++)
     {
         terrain_stitch_instance_data& piece = subzone_data_p->stitch_pieces[i];
@@ -193,12 +194,12 @@ bool terrain_instantiate_subzone(rfg_terrain_subzone* terrain_subzone_p, terrain
             rl_skirt_mesh_instance* blend = skirt.blend_renderable_instance_p.to_pointer();
             if (blend != nullptr)
             {
-                *(rl_material_map**)((unsigned char*)blend + 0x120) = terrain_data_p->m_terrain_material_map_p.to_pointer();
+                blend->set_terrain_material_map(terrain_data_p->m_terrain_material_map_p.to_pointer());
             }
             rl_skirt_mesh_instance* generated = skirt.generated_renderable_instance_p.to_pointer();
             if (generated != nullptr)
             {
-                *(rl_material_map**)((unsigned char*)generated + 0x120) = terrain_data_p->m_terrain_material_map_p.to_pointer();
+                generated->set_terrain_material_map(terrain_data_p->m_terrain_material_map_p.to_pointer());
             }
         }
     }

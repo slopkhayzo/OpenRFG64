@@ -88,23 +88,47 @@ static const float MIN_PED_SPAWN_DISTANCE = 20.0f; // 0x01335D44
 static const float MIN_CAMERA_PED_SPAWN_DISTANCE = 60.0f; // 0x01335D4C
 static const float MIN_VEH_SPAWN_DISTANCE = 60.0f; // the same constant at 0x01335D4C in rfg.exe's reset
 static const float MIN_CAMERA_VEH_SPAWN_DISTANCE = 100.0f;
-static const float MAX_PED_SPAWN_DISTANCE = 120.0f; // 0x016B6B1C
-static const float MAX_VEH_SPAWN_DISTANCE = 260.0f; // 0x016B6B20
-static const float MAX_CAMERA_PED_SPAWN_DISTANCE = 160.0f; // 0x016B6B24
-static const float MAX_CAMERA_VEH_SPAWN_DISTANCE = 200.0f; // 0x016B6B28
+static float MAX_PED_SPAWN_DISTANCE = 120.0f; // 0x016B6B1C
+static float MAX_VEH_SPAWN_DISTANCE = 260.0f; // 0x016B6B20
+static float MAX_CAMERA_PED_SPAWN_DISTANCE = 160.0f; // 0x016B6B24
+static float MAX_CAMERA_VEH_SPAWN_DISTANCE = 200.0f; // 0x016B6B28
 static const float MIN_PED_SPAWN_DISTANCE_SQRD = 400.0f; // 0x016B6B0C
 static const float MIN_VEH_SPAWN_DISTANCE_SQRD = 3600.0f; // 0x016B6B10
-static const float MAX_PED_SPAWN_DISTANCE_SQRD = MAX_PED_SPAWN_DISTANCE * MAX_PED_SPAWN_DISTANCE; // 0x0374831C
-static const float MAX_VEH_SPAWN_DISTANCE_SQRD = MAX_VEH_SPAWN_DISTANCE * MAX_VEH_SPAWN_DISTANCE; // 0x037457CC
-static const float MAX_CAMERA_PED_SPAWN_DISTANCE_SQRD = MAX_CAMERA_PED_SPAWN_DISTANCE * MAX_CAMERA_PED_SPAWN_DISTANCE; // 0x0374A4E0
-static const float MAX_CAMERA_VEH_SPAWN_DISTANCE_SQRD = MAX_CAMERA_VEH_SPAWN_DISTANCE * MAX_CAMERA_VEH_SPAWN_DISTANCE; // 0x037449EC
+static float MAX_PED_SPAWN_DISTANCE_SQRD = MAX_PED_SPAWN_DISTANCE * MAX_PED_SPAWN_DISTANCE; // 0x0374831C
+static float MAX_VEH_SPAWN_DISTANCE_SQRD = MAX_VEH_SPAWN_DISTANCE * MAX_VEH_SPAWN_DISTANCE; // 0x037457CC
+static float MAX_CAMERA_PED_SPAWN_DISTANCE_SQRD = MAX_CAMERA_PED_SPAWN_DISTANCE * MAX_CAMERA_PED_SPAWN_DISTANCE; // 0x0374A4E0
+static float MAX_CAMERA_VEH_SPAWN_DISTANCE_SQRD = MAX_CAMERA_VEH_SPAWN_DISTANCE * MAX_CAMERA_VEH_SPAWN_DISTANCE; // 0x037449EC
 static const float MIN_AMBIENT_VEHICLE_DESPAWN_DISTANCE_SQRD = 1600.0f; // 0x016B6B00
-static const float MAX_AMBIENT_VEHICLE_DESPAWN_DISTANCE_SQRD = 25600.0f; // 0x016B6B04
-static const float MAX_ARRIVAL_DISTANCE_SQRD = 40000.0f; // 0x016B6B08
+static float MAX_AMBIENT_VEHICLE_DESPAWN_DISTANCE_SQRD = 25600.0f; // 0x016B6B04
+static float MAX_ARRIVAL_DISTANCE_SQRD = 40000.0f; // 0x016B6B08
 static const vector NEAR_PLAYER_COLLECTION_OFFSET(100.0f, 500.0f, 100.0f); // 0x016B6AF4
 static const float AMBIENT_VEHICLE_SPEED = 9.0f; // 0x01335CE0
 // Magic number: a node further than this along the network is not a spawn point, and is left out of the cost table.
-static const float MAX_NODE_TRAVEL_DISTANCE = 200.0f;
+static float MAX_NODE_TRAVEL_DISTANCE = 200.0f;
+// OpenRFG: the "Ambient range" option (Game Options, 100-300 %) scales every max spawn/despawn distance below. The
+// base values are the original ones; amb_spawn_apply_range_option recomputes the live ones when the option changes.
+extern int Ambient_range_pct; // game_options.cpp
+static int Applied_range_pct = 100;
+static void amb_spawn_apply_range_option()
+{
+    if (Ambient_range_pct == Applied_range_pct)
+    {
+        return;
+    }
+    Applied_range_pct = Ambient_range_pct;
+    const float s = (float)Applied_range_pct * 0.01f;
+    MAX_PED_SPAWN_DISTANCE = 120.0f * s;
+    MAX_VEH_SPAWN_DISTANCE = 260.0f * s;
+    MAX_CAMERA_PED_SPAWN_DISTANCE = 160.0f * s;
+    MAX_CAMERA_VEH_SPAWN_DISTANCE = 200.0f * s;
+    MAX_PED_SPAWN_DISTANCE_SQRD = MAX_PED_SPAWN_DISTANCE * MAX_PED_SPAWN_DISTANCE;
+    MAX_VEH_SPAWN_DISTANCE_SQRD = MAX_VEH_SPAWN_DISTANCE * MAX_VEH_SPAWN_DISTANCE;
+    MAX_CAMERA_PED_SPAWN_DISTANCE_SQRD = MAX_CAMERA_PED_SPAWN_DISTANCE * MAX_CAMERA_PED_SPAWN_DISTANCE;
+    MAX_CAMERA_VEH_SPAWN_DISTANCE_SQRD = MAX_CAMERA_VEH_SPAWN_DISTANCE * MAX_CAMERA_VEH_SPAWN_DISTANCE;
+    MAX_AMBIENT_VEHICLE_DESPAWN_DISTANCE_SQRD = 25600.0f * s * s;
+    MAX_ARRIVAL_DISTANCE_SQRD = 40000.0f * s * s;
+    MAX_NODE_TRAVEL_DISTANCE = 200.0f * s;
+}
 // Magic numbers: 45 degrees, 0.5 degrees and 50 degrees, as the doubles rfg.exe loads for its cos calls (0x012CEB58,
 // 0x01336108, 0x01317C50).
 static const double ANGLE_45_DEGREES = 0.785385012626648;
@@ -2848,6 +2872,7 @@ void amb_spawn_do_frame()
     {
         return;
     }
+    amb_spawn_apply_range_option();
     Player_spawn_region.update_region();
     if (Character_delete_period.elapsed())
     {

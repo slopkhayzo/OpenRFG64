@@ -1253,6 +1253,12 @@ void lowLodInstanceRender(keen::GraphicsCommandWriter* pCommandWriter, TerrainRe
     for (int b = 0; b < submesh.num_render_blocks; b++)
     {
         const rl_material* material_p = terrain_material(pInstance->get_material_map()->get_material(blocks[b].material_map_idx));
+        if (material_p == nullptr)
+        {
+            // Fix: a handle that does not resolve (its material was left out of a full material library: 2,560
+            // registered materials, a Sledge map of 480 building types) skips its block instead of dereferencing null.
+            continue;
+        }
         setMaterial(pCommandWriter, pContext, pass, material_p->get_material_data());
         draw_render_block(pCommandWriter, mesh_p->getRenderGeometry(), blocks[b]);
     }

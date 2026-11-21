@@ -296,7 +296,8 @@ namespace keen
             }
             const uint32 size = vertexCount * vertexStride;
             // Magic number: at most the 64 KB of quadBuffer per command.
-            if (size > sizeof(pCommandBuffer->quadBuffer))
+            // OpenRFG: only quad lists go through quadBuffer; other commands map the (now 1 MB) immediate buffer directly.
+            if (pCommandBuffer->quadlistImmediateCommand ? size > sizeof(pCommandBuffer->quadBuffer) : size >= pCommandBuffer->immediateVertexBufferSize)
             {
                 return nullptr;
             }

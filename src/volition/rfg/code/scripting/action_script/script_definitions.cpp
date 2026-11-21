@@ -603,7 +603,6 @@ event_result Event_callback_dialogue_line_started(const dialogue_event* data, sc
     {
         return EVENT_IGNORED;
     }
-    { static int s_n = 0; if (s_n++ < 6000) { char b[120]; snprintf(b, sizeof(b), "DBGDLG started line=%d arg=%d", (int)(game_handle)data->voice_line, (int)(game_handle)*args[0]); openrfg_log(b); } }
     return (game_handle)data->voice_line == (game_handle)*args[0] ? EVENT_HANDLED : EVENT_IGNORED;
 }
 
@@ -614,7 +613,6 @@ event_result Event_callback_dialogue_line_finished(const dialogue_event* data, s
     {
         return EVENT_IGNORED;
     }
-    { static int s_n = 0; if (s_n++ < 6000) { char b[120]; snprintf(b, sizeof(b), "DBGDLG finished line=%d arg=%d", (int)(game_handle)data->voice_line, (int)(game_handle)*args[0]); openrfg_log(b); } }
     return (game_handle)data->voice_line == (game_handle)*args[0] ? EVENT_HANDLED : EVENT_IGNORED;
 }
 
@@ -688,7 +686,6 @@ event_result Event_callback_patrol_squad_reached_node(const patrol_squad_reached
 {
     const unsigned int node = (unsigned int)*args[0];
     const unsigned int squad = (unsigned int)*args[1];
-    { static int s_p = 0; if (s_p++ < 1500) { char b[200]; snprintf(b, sizeof(b), "DBGPAT node=%x squad=%x ev_node=%x ev_squad=%x nodeobj=%d squadobj=%d", node, squad, data->patrol_node ? data->patrol_node->nav_handle : 0u, data->squad_handle, object_of_type<object>(node, OBJ_TYPE_NAVPOINT) != nullptr, object_of_type<object>(squad, OBJ_TYPE_SQUAD) != nullptr); openrfg_log(b); } }
     if (object_of_type<object>(node, OBJ_TYPE_NAVPOINT) != nullptr && object_of_type<object>(squad, OBJ_TYPE_SQUAD) != nullptr && node == data->patrol_node->nav_handle &&
         squad == data->squad_handle)
     {

@@ -1958,8 +1958,8 @@ void automobile_reset_handling_for_ai(automobile* ap, bool ai_vehicle, bool is_d
     hkpVehicleDefaultBrake* brake = static_cast<hkpVehicleDefaultBrake*>(instance->m_brake);
     hkpVehicleDefaultVelocityDamper* damper = static_cast<hkpVehicleDefaultVelocityDamper*>(instance->m_velocityDamper);
     hkpVehicleDefaultEngine* engine = static_cast<hkpVehicleDefaultEngine*>(instance->m_engine);
-    // m_objectQualityType of the chassis' broad phase handle, as a byte at 0x2A.
-    unsigned char* quality_type = reinterpret_cast<unsigned char*>(instance->m_entity) + 0x2A;
+    // The chassis' broad phase handle quality type (a hard-coded 0x2A byte offset is wrong in 64-bit).
+    signed char* quality_type = &instance->m_entity->m_collidable.m_broadPhaseHandle.m_objectQualityType;
     float enforced_max_speed;
     if (ai_handling) {
         data->m_chassisUnitInertiaYaw = info->m_ai_chassis_unit_inertia_yaw;

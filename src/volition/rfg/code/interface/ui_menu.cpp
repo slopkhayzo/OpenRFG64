@@ -1557,22 +1557,6 @@ void ui_menu::process(float, bool)
         adjust_selected_item();
     }
     process_data_items();
-    {
-        void openrfg_log(const char*);
-        static int calls = 0;
-        calls++;
-        if (calls % 200 == 1 && calls < 1500)
-        {
-            char m[] = "DBGMENU doc=? uimen=? multi=? awaitFade=? awaitSel=? items=?";
-            m[12] = m_doc_info != nullptr ? '1' : '0';
-            m[20] = Input_enabled_uimen ? '1' : '0';
-            m[28] = multi_core_platform_ui_is_active() ? '1' : '0';
-            m[40] = m_awaiting_tween_fade_in_end ? '1' : '0';
-            m[51] = m_awaiting_tween_on_select_end ? '1' : '0';
-            m[59] = (char)('0' + (m_num_items > 9 ? 9 : m_num_items));
-            openrfg_log(m);
-        }
-    }
 #ifdef OPENRFG_X64
     // WORKAROUND (x64): the fade-in end signal of the menu animation can arrive before the menu is re-armed and then
     // never comes again, which leaves the menu without input. After about 3 s of waiting it is released.
@@ -2460,10 +2444,6 @@ void ui_menu_tween_on_select_end(int vint_doc_handle)
 void ui_menu_tween_fade_in_end(int vint_doc_handle)
 {
     const int doc_handle = ui_get_doc_handle_from_vint_doc_handle(vint_doc_handle);
-    {
-        void openrfg_log(const char*);
-        openrfg_log(doc_handle == -1 ? "DBGFADE doc_handle lookup FAILED (-1)" : "DBGFADE doc_handle found");
-    }
     for (int i = Menus.size() - 1; i > -1; i--)
     {
         ui_menu* menu = Menus[i];

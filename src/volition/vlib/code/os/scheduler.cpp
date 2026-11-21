@@ -931,7 +931,6 @@ void scheduling_trigger::activate()
 event_trigger* scheduler_get_event_trigger()
 {
     event_trigger* trig = Free_event_triggers.pop();
-    { extern void openrfg_log(const char*); static int g=0; if(g<3||(unsigned long long)(void*)trig+1ull<0x100001ull||(unsigned long long)(void*)trig>0x7FFFFFFFFFFFull){ g++; char bb[120]; snprintf(bb,sizeof bb,"DBGSCH4 get_event_trigger -> %p",(void*)trig); openrfg_log(bb);} }
     trig->in_use = true;
     trig->event.reset();
     trig->fired = false;
@@ -954,10 +953,7 @@ scheduling_trigger* scheduler_get_scheduling_trigger()
 // an input trigger it waits for that trigger, else it is queued and a controller woken.
 cpu_job* scheduler_add_job(trigger_base* input_trig, cpu_job* job, trigger_base* output_trig)
 {
-    { extern void openrfg_log(const char*); if(output_trig && ((unsigned long long)(void*)output_trig+1ull<0x100001ull || (unsigned long long)(void*)output_trig>0x7FFFFFFFFFFFull)){ char bb[200]; snprintf(bb,sizeof bb,"DBGSCH3 BAD out=%p in=%p job=%p",(void*)output_trig,(void*)input_trig,(void*)job); openrfg_log(bb);} }
     cpu_job* this_job = Free_jobs.pop();
-    { extern void openrfg_log(const char*); static int dn=0; if(dn<5){ dn++; char bb[200]; snprintf(bb,sizeof bb,"DBGSCH add_job in=%p job=%p out=%p vptr=%p this_job=%p",(void*)input_trig,(void*)job,(void*)output_trig,output_trig?*(void**)output_trig:(void*)0,(void*)this_job); openrfg_log(bb);} }
-    { extern void openrfg_log(const char*); static void* fv=0; if(!fv&&output_trig) fv=*(void**)output_trig; static int d2=0; if(d2<20 && (!this_job || (output_trig && *(void**)output_trig!=fv) || (output_trig && (output_trig->countdown>1000 || !output_trig->in_use)))){ d2++; char bb[240]; snprintf(bb,sizeof bb,"DBGSCH2 WEIRD out=%p vptr=%p exp=%p this_job=%p cd=%u inuse=%d",(void*)output_trig,output_trig?*(void**)output_trig:(void*)0,fv,(void*)this_job,output_trig?(unsigned)output_trig->countdown:0u,output_trig?(int)output_trig->in_use:-1); openrfg_log(bb);} }
     *this_job = *job;
     this_job->ordinal = get_job_ordinal();
     if (output_trig != nullptr)

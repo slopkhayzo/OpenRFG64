@@ -620,7 +620,6 @@ float ui_get_menu_action_input(control_button_action choice, unsigned int contro
     return (float)controls_is_button_down(choice, controller_id);
 }
 
-void openrfg_log(const char*);
 // 0x008B4200 (:752)
 // Each button's input for the menus: in the boot, the main menu and its option states any controller counts (the
 // first found), else the player's controller; a held button repeats after 0.4 s every 0.1 s; a button that is held
@@ -737,8 +736,6 @@ static void ui_process_input()
         b.m_button_input = input;
         b.m_button_actual_input = actual;
         b.m_button_repeat_time = repeat_time;
-        if (fabsf(actual) > 0.0f) { static int n = 0; if (n < 10) { n++; openrfg_log("DBGUI actual input >0"); } }
-        if (fabsf(input) > 0.0f) { static int n2 = 0; if (n2 < 10) { n2++; openrfg_log("DBGUI input >0 (passes gating)"); } }
         Button_info.m_received_input = Button_info.m_received_input || fabsf(input) > 0.0f;
         if (i == 0 || (i > 8 && i < Num_buttons))
         {
@@ -3054,16 +3051,6 @@ void ui_fade_to_black_init()
 // The black's alpha moves one unit a second; a fade that paused the game unpauses it once clear.
 void ui_fade_to_black_process()
 {
-    { // DBGFADE2 temp
-        extern void openrfg_log(const char*);
-        static int dbgn = 0;
-        if ((dbgn++ % 400) == 0 && dbgn < 8000)
-        {
-            char b[200];
-            sprintf(b, "DBGFADE2 out=%d ref=%d alpha=%f frametime_real=%f", (int)Fade_out, (int)Fade_ref, (double)Fade_alpha, (double)Frametime_real);
-            openrfg_log(b);
-        }
-    }
     if (Fade_out)
     {
         Fade_alpha = Frametime_real + Fade_alpha;

@@ -29,6 +29,8 @@
 #ifndef OPENRFG_AUDIO
 
 #include "volition/rfg/code/gamewide/game_options.h"
+
+int Ambient_range_pct = 100; // OpenRFG: ambient spawn/despawn range option, percent (ambient_spawn_manager.cpp)
 #include "volition/rfg/code/control/control_map.h"
 #include "volition/rfg/code/interface/option_menus/option_menu_system.h"
 
@@ -286,6 +288,12 @@ void game_options_ini_file_read_writer<0>::read_or_write_ini_file(keen::FilePath
     // Original: the ini file has the inverse of camera_shake.
     n.camera_shake = n.camera_shake == 0;
     n.camera_shake = !keen::readIniFileBool(path, "game", "camera_shake", n.camera_shake != 0);
+    // OpenRFG: ambient spawn/despawn range in percent (100-600).
+    Ambient_range_pct = keen::readIniFileInt(path, "game", "ambient_range_pct", Ambient_range_pct);
+    if (Ambient_range_pct < 100 || Ambient_range_pct > 600)
+    {
+        Ambient_range_pct = 100;
+    }
     o.preferred_text_language = (signed char)keen::readIniFileInt(path, "game", "preferred_text_base", o.preferred_text_language);
     o.preferred_audio_language = (signed char)keen::readIniFileInt(path, "game", "preferred_audio_base", o.preferred_audio_language);
     for (unsigned int setting = 0; setting < NUM_CONTROL_CONFIG_SETTINGS; setting++)
@@ -316,6 +324,8 @@ void game_options_load_ini_file_into_cache()
 }
 
 #else // OPENRFG_AUDIO
+
+extern int Ambient_range_pct; // OpenRFG: defined in the non-audio half above (read from the ini there, written below)
 
 #include "volition/rfg/code/gamewide/game_options.h"
 #include "volition/audio_lib/code/audiolib_api.h"
@@ -1010,6 +1020,7 @@ void game_options_ini_file_read_writer<1>::read_or_write_ini_file(keen::FilePath
     n.camera_shake = n.camera_shake == 0;
     keen::writeIniFileBool(path, "game", "camera_shake", n.camera_shake != 0);
     n.camera_shake = n.camera_shake == 0;
+    keen::writeIniFileInt(path, "game", "ambient_range_pct", Ambient_range_pct);
     keen::writeIniFileInt(path, "game", "preferred_text_base", o.preferred_text_language);
     keen::writeIniFileInt(path, "game", "preferred_audio_base", o.preferred_audio_language);
     for (unsigned int setting = 0; setting < NUM_CONTROL_CONFIG_SETTINGS; setting++)

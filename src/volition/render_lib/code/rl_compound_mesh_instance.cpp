@@ -26,6 +26,7 @@
 #include "volition/render_lib/code/rl_mesh.h"
 #include "volition/render_lib/code/rl_mesh_data.h"
 #include "volition/render_lib/code/rl_mesh_instance.h"
+#include "volition/render_lib/code/rl_small_array.h"
 #include "volition/render_lib/code/rl_metrics.h"
 #include "volition/render_lib/code/rl_planar_decal.h"
 #include "volition/render_lib/code/rl_render_lib.h"
@@ -235,10 +236,10 @@ void rl_compound_mesh_instance::render(rl_renderer& renderer, rl_camera& camera,
 }
 
 // The alpha-blended flag of each material of the map (rl_material_library_material_is_transparent, inlined).
-static std::vector<unsigned char> material_alpha_flags(const rl_material_map* mat_map)
+static rl_small_array<unsigned char> material_alpha_flags(const rl_material_map* mat_map)
 {
     const int num_materials = mat_map->get_num_materials();
-    std::vector<unsigned char> alpha(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<unsigned char> alpha(num_materials, 0);
     for (int i = 0; i < num_materials; i++)
     {
         alpha[i] = rl_material_library_material_is_transparent(mat_map->get_material(i)) ? 1 : 0;
@@ -252,7 +253,7 @@ static std::vector<unsigned char> material_alpha_flags(const rl_material_map* ma
 void rl_compound_mesh_instance::get_material_block_counts(int* buffer, const rl_camera* pCamera)
 {
     const rl_mesh_data_runtime* mesh_data = mesh_data_of(m_renderable_p);
-    const std::vector<unsigned char> alpha = material_alpha_flags(m_mat_map);
+    const rl_small_array<unsigned char> alpha = material_alpha_flags(m_mat_map);
     for (int i = 0; i < m_num_renderable_sub_instances; i++)
     {
         const rl_sub_instance& sub_instance = m_sub_instances[i];
@@ -303,7 +304,7 @@ void rl_compound_mesh_instance::add_material_stats_to_batch(rl_batched_pass* pas
     {
         keen::debug::nativePrintArgs("rl_compound_mesh_instance::add_material_stats_to_batch: size == 0\n");
     }
-    std::vector<int> counts(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<int> counts(num_materials, 0);
     get_material_block_counts(counts.data(), pCamera);
     const unsigned int vis_flags = get_vis_pass_flags();
     for (int i = 0; i < m_mat_map->get_num_materials(); i++)
@@ -337,12 +338,12 @@ void rl_compound_mesh_instance::add_to_batch(rl_batched_pass* pass_p, const rl_c
     const unsigned int non_shadow_flags = scene_p->get_visibility_manager()->get_non_shadow_vis_flags() & get_vis_pass_flags();
     vector render_offset;
     scene_p->get_render_offset(render_offset);
-    const std::vector<unsigned char> alpha = material_alpha_flags(m_mat_map);
+    const rl_small_array<unsigned char> alpha = material_alpha_flags(m_mat_map);
     const int num_materials = m_mat_map->get_num_materials();
-    std::vector<int> counts(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<int> counts(num_materials, 0);
     get_material_block_counts(counts.data(), pCamera);
-    std::vector<rl_batched_instance*> slots(num_materials > 0 ? num_materials : 0, nullptr);
-    std::vector<int> used(num_materials > 0 ? num_materials : 0, 0);
+    rl_small_array<rl_batched_instance*> slots(num_materials, nullptr);
+    rl_small_array<int> used(num_materials, 0);
     const rl_mesh* mesh_p = (const rl_mesh*)m_renderable_p;
     for (int i = 0; i < num_materials; i++)
     {
@@ -439,7 +440,7 @@ void rl_compound_mesh_instance::add_to_deferred(const rl_camera* pCamera, rl_def
         return;
     }
     const unsigned int non_shadow_flags = get_scene()->get_visibility_manager()->get_non_shadow_vis_flags() & get_vis_pass_flags();
-    const std::vector<unsigned char> alpha = material_alpha_flags(m_mat_map);
+    const rl_small_array<unsigned char> alpha = material_alpha_flags(m_mat_map);
     // Notes (decompiled behaviour, kept as is): the camera position in the instance's frame is computed and not used.
     vector camera_local(pCamera->get_position().x - get_position().x, pCamera->get_position().y - get_position().y, pCamera->get_position().z - get_position().z);
     camera_local.rotate(get_rotation());

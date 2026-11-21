@@ -1113,6 +1113,21 @@ void rl_scene_renderer::render_deferred_list(rl_renderer& renderer, rl_camera& c
 void rl_scene_renderer::render_deferred(rl_renderer& renderer, rl_camera& camera, rl_light& light, rl_shadow_render_parameters& shadow_render_params, const unsigned int vis_flags, const float fade_range, const bool skip_decals, const bool alpha_blend, const bool msaa_enabled)
 {
     rl_particle_renderer::get_instance()->reset_deferred();
+    // Fix: the adds count past a full list (they write up to its capacity less one); rfg.exe then sorted and drew that
+    // many, past the array's end, and a garbage entry crashed the frame (render_deferred_list, get_distortion_only:
+    // more than 9,216 alpha-blended parts in view, a Sledge map with a glass pane per window). Only what was written.
+    if (m_num_deferred_sort_entries > (unsigned int)DEFERRED_SORT_MAX - 1)
+    {
+        m_num_deferred_sort_entries = DEFERRED_SORT_MAX - 1;
+    }
+    if (m_num_deferred_sort_entries_first > (unsigned int)DEFERRED_SORT_FIRST_MAX - 1)
+    {
+        m_num_deferred_sort_entries_first = DEFERRED_SORT_FIRST_MAX - 1;
+    }
+    if (m_num_deferred_sort_entries_last > (unsigned int)DEFERRED_SORT_LAST_MAX - 1)
+    {
+        m_num_deferred_sort_entries_last = DEFERRED_SORT_LAST_MAX - 1;
+    }
     std::sort(m_deferred_sort_entries, m_deferred_sort_entries + m_num_deferred_sort_entries, deferred_sort_entry::btf_predicate);
     render_deferred_list(renderer, camera, light, shadow_render_params, vis_flags, fade_range, skip_decals, alpha_blend, m_deferred_sort_entries_first, m_num_deferred_sort_entries_first, msaa_enabled);
     render_deferred_list(renderer, camera, light, shadow_render_params, vis_flags, fade_range, skip_decals, alpha_blend, m_deferred_sort_entries, m_num_deferred_sort_entries, msaa_enabled);
