@@ -33,6 +33,7 @@
 #include "volition/vlib/code/cfile/cfile.h"
 #include "volition/vlib/code/math/bbox.h"
 #include "volition/vlib/code/memory/object_pool.h"
+#include "volition/vlib/code/util/string_comp.h" // memtest: v_stricmp (a zone without terrain)
 
 #include <float.h>
 #include <math.h>
@@ -251,6 +252,31 @@ bool obj_zone::serialize(obj_prop_block& pblock, bool load)
     pblock.get_optional(ZONE_PROP_WIND_MAX_SPEED, speed);
     wind_max_speed = speed;
 
+    // memtest: a zone without terrain (terrain_file_name "none": a cell of a map that has its own ground, such as the
+    // benchmark maps' plateau, split into zones for their object handles; tools/maps/rfg_avenues.py --zones). It has
+    // the cell's box and its district, wind and spawn settings, and none of the terrain's: no height field, stitch
+    // pieces, invisible barriers, path finding, occluders or the phantom under the terrain. A world_zone needs its
+    // obj_zone (process_streaming_zone), and the original refuses one whose terrain is not found.
+    if (v_stricmp(terrain_name, "none") == 0)
+    {
+        terrain = nullptr;
+        zone_pfg.pfg = nullptr;
+        zone_pfg.pfg_shape = 0xFFFFFFFF;
+        zone_pfg.pfg_havok_handle = 0xFFFFFFFF;
+        zone_pfg.vehicle_pfg = nullptr;
+        zone_pfg.vehicle_pfg_shape = 0xFFFFFFFF;
+        zone_pfg.vehicle_pfg_havok_handle = 0xFFFFFFFF;
+        rfg_zonex_get_zone_bbox(ZERO_VECTOR, local_bmin, local_bmax);
+        m_occluders.remove_all();
+        heightfield_shape = 0xFFFFFFFF;
+        havok_handle = 0xFFFFFFFF;
+        stitch_piece_havok_handle = 0xFFFFFFFF;
+        get_bbox(last_known_bmin, last_known_bmax);
+        obj_flags.special_lifetime = 1;
+        aabb_phantom_index = -1;
+        return true;
+    }
+
     // The terrain of the cell.
     char terrain_filename[64];
     cf_add_ext(terrain_filename, sizeof(terrain_filename), terrain_name, ".cterrain_pc", false);
@@ -398,6 +424,11 @@ void obj_zone::deinstantiate_resources()
         havok_body_free(havok_handle, false, true, true);
         havok_handle = 0xFFFFFFFF;
     }
+    if (terrain == nullptr) // memtest: a zone without terrain (serialize) has nothing of it to give back
+    {
+        release_aabb_phantom(aabb_phantom_index);
+        return;
+    }
     terrain_data* data = terrain->terrain_data_p;
     if (stitch_piece_havok_handle != 0xFFFFFFFF)
     {
@@ -445,9 +476,9 @@ void obj_zone::deinstantiate_resources()
 // 0x00A71780 (:525)
 unsigned char obj_zone::get_effect_material(unsigned int shape_key, const vector* contact_point, const hkpWorldObject* hk_objp) const
 {
-    terrain_data* data = terrain->terrain_data_p;
+    terrain_data* data = terrain != nullptr ? terrain->terrain_data_p : nullptr; // memtest: a zone without terrain
     const hkpWorldObject* height_field = (const hkpWorldObject*)havok_body_get_pointer(havok_handle);
-    if (data->m_layer_map.data_p.to_pointer() != nullptr && height_field == hk_objp)
+    if (data != nullptr && data->m_layer_map.data_p.to_pointer() != nullptr && height_field == hk_objp)
     {
         if (contact_point == nullptr)
         {
@@ -560,7 +591,7 @@ bool obj_zone::process_melee_hit(object* attacker, float damage, const vector& i
 // 0x00743430 (.h:99)
 terrain_data* obj_zone::get_terrain_data() const
 {
-    return terrain->terrain_data_p;
+    return terrain != nullptr ? terrain->terrain_data_p : nullptr; // memtest: a zone without terrain (serialize)
 }
 
 // 0x009308B0 (.h:114)
