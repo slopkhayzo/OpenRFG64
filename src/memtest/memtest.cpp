@@ -1778,6 +1778,7 @@ void memtest_frame()
     }
     wc_drive();
     report_scaling();
+    memtest_ui_frame();
     const unsigned long long now = GetTickCount64();
     wc_repeat(now);
     if (now - Last_census_ms >= Interval_ms)
