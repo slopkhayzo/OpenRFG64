@@ -22,6 +22,7 @@
 #include "volition/rfg/code/gameplay/object_district.h"
 #include "volition/rfg/code/gameplay/squad_spawn.h"
 #include "volition/rfg/code/gamewide/custom_dlc_data.h"
+#include "volition/rfg/code/gamewide/game_trace.h"
 #include "volition/rfg/code/gamewide/tweak_table.h"
 #include "volition/rfg/code/hud/hud_message.h"
 #include "volition/rfg/code/hud/hud_ui_activity_complete.h"
@@ -1136,6 +1137,7 @@ void activity_house_arrest::report_action_node_end(unsigned int action_node_hand
         npc* np = World.object_from_handle<npc>(hostage_info_list[i].hostage_handle);
         if (np != nullptr && !np->is_killed())
         {
+            GAME_TRACE("activity", "house arrest: the player freed hostage 0x%08X at action node 0x%08X", hostage_info_list[i].hostage_handle, action_node_handle);
             np->npc_flags.freed_from_bonds = 1;
             np->set_team(pp->current_team);
             pp->escort_squad_add(np);

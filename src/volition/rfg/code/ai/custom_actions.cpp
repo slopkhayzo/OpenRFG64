@@ -21,6 +21,7 @@
 #include "volition/rfg/code/gameplay/activities/activity_house_arrest.h"
 #include "volition/rfg/code/gameplay/gameflow/gfm_orders_manager.h"
 #include "volition/rfg/code/gamewide/game_render.h"
+#include "volition/rfg/code/gamewide/game_trace.h"
 #include "volition/rfg/code/gamewide/tweak_table.h"
 #include "volition/rfg/code/geom/anim.h"
 #include "volition/rfg/code/geom/character.h"
@@ -1539,6 +1540,7 @@ ai_results tied_up_action::do_action(npc* np) const
     }
     else if (!np->char_inst->is_playing_action(ANIMATION_ACTION_KNEEL_TO_STAND_HANDS_TIED))
     {
+        GAME_TRACE("ai", "npc 0x%08X stood up from its bonds: no longer tied up", np->get_handle());
         np->npc_flags.tied_up = 0;
         np->npc_flags.freed_from_bonds = 0;
         return AI_RESULT_SUCCESS;

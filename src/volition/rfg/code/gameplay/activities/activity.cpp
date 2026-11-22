@@ -2504,8 +2504,9 @@ event_result activity_report_action_node(const event_data& in_event, notify_info
         return EVENT_IGNORED;
     }
     const object* user = World.object_from_handle(data.human_handle);
-    // Original: only an npc counts.
-    if (user == nullptr || user->get_obj_type() != OT_HUMAN || user->get_sub_type() != OT_SUB_HUMAN_NPC)
+    // Original: only the player counts (rfg.exe tests the sub type for 3, OT_SUB_HUMAN_PLAYER). The house arrest frees a
+    // hostage when the player ends the hostage's action node; with an npc test here the hostages stayed tied up.
+    if (user == nullptr || user->get_obj_type() != OT_HUMAN || user->get_sub_type() != OT_SUB_HUMAN_PLAYER)
     {
         return EVENT_IGNORED;
     }
