@@ -61,13 +61,6 @@ static int first_arg_pos(lua_State* lua_state, int num_args)
     return top > num_args ? num_args : top;
 }
 
-// A tween's callback variants (protected members of vint_object_tween), as the inlined clears reach them.
-// Magic numbers: m_start_callback at 0x170, m_end_callback at 0x190.
-static vint_variant& tween_callback(vint_object_base* tween, unsigned int offset)
-{
-    return *(vint_variant*)((unsigned char*)tween + offset);
-}
-
 // 0x008A1D30 (:106)
 // The document of the running script thread.
 static vint_document* get_rfg_doc_from_context()
@@ -113,7 +106,9 @@ static int menu_tween_fade_in_end(lua_State* lua_state)
 }
 
 // 0x008B9BD0 (:156)
-// remove_tween_start_callback(tween handle): clears the tween's start callback.
+// remove_tween_start_callback(tween handle): clears the tween's start callback. rfg.exe inlines zero_start_callback
+// (its m_start_callback at +0x170). x64: by the member, not that offset, which is m_end_value there: the results
+// screens' reward rows faded in to an alpha of 0.
 static int remove_tween_start_callback(lua_State* lua_state)
 {
     int pos = first_arg_pos(lua_state, 1);
@@ -124,14 +119,15 @@ static int remove_tween_start_callback(lua_State* lua_state)
         vint_object_base* obj = vint_object_base::find_object(handle, doc);
         if (obj != nullptr && obj->get_type() == vint_object_tween::Object_type)
         {
-            tween_callback(obj, 0x170).zero();
+            ((vint_object_tween*)obj)->zero_start_callback();
         }
     }
     return lua_add_return<int>(0, lua_state);
 }
 
 // 0x008B9C70 (:173)
-// remove_tween_end_callback(tween handle): clears the tween's end callback.
+// remove_tween_end_callback(tween handle): clears the tween's end callback. rfg.exe inlines zero_end_callback (its
+// m_end_callback at +0x190). x64: by the member, not that offset, which is m_start_callback there.
 static int remove_tween_end_callback(lua_State* lua_state)
 {
     int pos = first_arg_pos(lua_state, 1);
@@ -142,7 +138,7 @@ static int remove_tween_end_callback(lua_State* lua_state)
         vint_object_base* obj = vint_object_base::find_object(handle, doc);
         if (obj != nullptr && obj->get_type() == vint_object_tween::Object_type)
         {
-            tween_callback(obj, 0x190).zero();
+            ((vint_object_tween*)obj)->zero_end_callback();
         }
     }
     return lua_add_return<int>(0, lua_state);
