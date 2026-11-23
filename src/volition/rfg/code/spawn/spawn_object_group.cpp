@@ -134,7 +134,8 @@ bool human_spawn_group_info::load(const human_info* h_info)
 {
     group_name = h_info->name;
     name_crc = crc_stri(group_name, 0);
-    const human_info** data = (const human_info**)Permanent_mempool.alloc(4, 4);
+    // rfg.exe: alloc(4, 4), one 4-byte pointer. x64: 8 bytes, or the add wrote into the next group's pointer.
+    const human_info** data = (const human_info**)Permanent_mempool.alloc(sizeof(const human_info*), sizeof(void*));
     if (data == nullptr)
     {
         return false;
@@ -256,7 +257,8 @@ bool vehicle_spawn_group_info::load(const vehicle_info* v_info)
 {
     group_name = v_info->name;
     name_crc = crc_stri(group_name, 0);
-    const vehicle_info** data = (const vehicle_info**)Permanent_mempool.alloc(4, 4);
+    // rfg.exe: alloc(4, 4), one 4-byte pointer. x64: 8 bytes, or the add wrote into the next group's pointer.
+    const vehicle_info** data = (const vehicle_info**)Permanent_mempool.alloc(sizeof(const vehicle_info*), sizeof(void*));
     if (data == nullptr)
     {
         return false;

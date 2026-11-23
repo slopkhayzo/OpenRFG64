@@ -1357,10 +1357,15 @@ void havok_system_init()
     }
     Havok_system_init = true;
     havok_memory_init();
-    Havok_add_entity_list.init((hkpEntity**)Permanent_mempool.alloc(0x1000, 0), 0x400, 0);
-    Havok_remove_entity_list.init((hkpEntity**)Permanent_mempool.alloc(0x1000, 0), 0x400, 0);
-    Havok_add_phantom_list.init((hkpPhantom**)Permanent_mempool.alloc(0x200, 0), 0x80, 0);
-    Havok_remove_phantom_list.init((hkpPhantom**)Permanent_mempool.alloc(0x200, 0), 0x80, 0);
+    // x64: rfg.exe allocates 0x1000 and 0x200 bytes, 4-byte pointers for 0x400 and 0x80 entries; 8-byte pointers need
+    // twice that. A level's teardown queues more than 64 phantoms (more than 512 entities in big destruction), and
+    // the rest was written past the lists, into what Permanent_mempool holds next: the always_loaded peg's entries.
+    // Their links then pointed into memory reused since, the textures' entry lists took nodes of no peg, and the render
+    // thread faulted on one after the second in-game load.
+    Havok_add_entity_list.init((hkpEntity**)Permanent_mempool.alloc(0x400 * sizeof(hkpEntity*), 0), 0x400, 0);
+    Havok_remove_entity_list.init((hkpEntity**)Permanent_mempool.alloc(0x400 * sizeof(hkpEntity*), 0), 0x400, 0);
+    Havok_add_phantom_list.init((hkpPhantom**)Permanent_mempool.alloc(0x80 * sizeof(hkpPhantom*), 0), 0x80, 0);
+    Havok_remove_phantom_list.init((hkpPhantom**)Permanent_mempool.alloc(0x80 * sizeof(hkpPhantom*), 0), 0x80, 0);
 
     hkpWorldCinfo info;
     info.setupSolverInfo(hkpWorldCinfo::SOLVER_TYPE_4ITERS_MEDIUM);

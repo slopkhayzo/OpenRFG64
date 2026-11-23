@@ -52,7 +52,7 @@ static anim_rig* load_rig_file(const char* rig_name)
 void game_rig_system_init()
 {
     const unsigned int mark = Common_mempool.mark();
-    const char** files = (const char**)Common_mempool.alloc(0x8000, 0);
+    const char** files = (const char**)Common_mempool.alloc(0x2000 * sizeof(const char*), 0); // rfg.exe: 0x8000 (4-byte pointers)
     const int num_files = (int)cf_find_ext(files, 0x2000, ".rig_pc");
     if (num_files > 290) {
         char message[512];

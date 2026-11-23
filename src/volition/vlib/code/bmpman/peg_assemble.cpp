@@ -204,8 +204,8 @@ bool peg_asm_start(vlib_platform plat, mempool_base* temp_pool, mempool_base* fi
     {
         new (table) peg_asm_hash_table();
     }
-    // Magic number: room for 0x2000 entries (0x8000 bytes of pointers).
-    Peg_entries.init((peg_entry**)temp_pool->alloc(0x8000, 0), 0x2000, 0);
+    // Magic number: room for 0x2000 entries (rfg.exe: 0x8000 bytes, 4-byte pointers; x64: sizeof).
+    Peg_entries.init((peg_entry**)temp_pool->alloc(0x2000 * sizeof(peg_entry*), 0), 0x2000, 0);
     Peg_exclusions_hash_table = nullptr;
     Platform = plat;
     return true;
