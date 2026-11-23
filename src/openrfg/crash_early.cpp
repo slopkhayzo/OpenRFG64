@@ -173,8 +173,21 @@ namespace
 
     void logline(const char* t){ HANDLE f=CreateFileA("openrfg_crash.txt",FILE_APPEND_DATA,FILE_SHARE_READ,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr); if(f!=INVALID_HANDLE_VALUE){put(f,t);put(f,"\r\n");CloseHandle(f);} }
     LONG WINAPI late_filter(EXCEPTION_POINTERS* i){ report(i,"UNHANDLED"); return EXCEPTION_CONTINUE_SEARCH; }
-    void abort_handler(int){ logline("=== abort() called"); TerminateProcess(GetCurrentProcess(),3); }
-    void terminate_handler(){ logline("=== std::terminate called (uncaught C++ exception)"); TerminateProcess(GetCurrentProcess(),3); }
+    // memtest (OpenRFG64-memtest): the stack of an abort, a terminate or a pure virtual call, through report() with the
+    // calling thread's own context (an in-game load test ended in abort() with nothing else logged, 2026-11-23).
+    void report_here(const char* title)
+    {
+        CONTEXT context;
+        RtlCaptureContext(&context);
+        EXCEPTION_RECORD record = {};
+        record.ExceptionCode = 3;
+        record.ExceptionAddress = (void*)context.Rip;
+        EXCEPTION_POINTERS pointers = {&record, &context};
+        report(&pointers, title);
+    }
+    void abort_handler(int){ logline("=== abort() called"); report_here("ABORT"); TerminateProcess(GetCurrentProcess(),3); }
+    void terminate_handler(){ logline("=== std::terminate called (uncaught C++ exception)"); report_here("TERMINATE"); TerminateProcess(GetCurrentProcess(),3); }
+    void purecall_handler(){ logline("=== pure virtual function call"); report_here("PURECALL"); TerminateProcess(GetCurrentProcess(),3); }
     void invalid_handler(const wchar_t*,const wchar_t*,const wchar_t*,unsigned,uintptr_t){ logline("=== invalid CRT parameter"); TerminateProcess(GetCurrentProcess(),3); }
     void exit_handler(){ logline("=== process exiting (exit() called)"); }
 
@@ -187,6 +200,7 @@ namespace
             SetUnhandledExceptionFilter(late_filter);
             signal(SIGABRT, abort_handler);
             set_terminate(terminate_handler);
+            _set_purecall_handler(purecall_handler);
             _set_invalid_parameter_handler(invalid_handler);
             atexit(exit_handler);
         }
