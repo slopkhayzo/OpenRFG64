@@ -1601,9 +1601,9 @@ void ui_init()
     }
     ui_init_variables();
     ui_menu_init();
-    // Magic numbers: 10 names each, 16-byte aligned.
-    My_vint_project_settings.include_bmp_pegs.init((char**)Permanent_mempool.alloc(0x28, 0x10), 10, 0);
-    My_vint_project_settings.include_bmp_sheets.init((char**)Permanent_mempool.alloc(0x28, 0x10), 10, 0);
+    // Magic numbers: 10 names each, 16-byte aligned (rfg.exe: 0x28 bytes, 4-byte pointers; x64: sizeof).
+    My_vint_project_settings.include_bmp_pegs.init((char**)Permanent_mempool.alloc(10 * sizeof(char*), 0x10), 10, 0);
+    My_vint_project_settings.include_bmp_sheets.init((char**)Permanent_mempool.alloc(10 * sizeof(char*), 0x10), 10, 0);
     if (!vint_rfg_system_init())
     {
         return;
