@@ -104,6 +104,15 @@ static unsigned int freeListElementSize(unsigned int size, unsigned int& alignme
     return (s + alignment - 1) & ~(alignment - 1);
 }
 
+// The list of zero-byte requests (m_sizeToFreeList[0]) gets elements of its alignment: 4 in rfg.exe, the size of a
+// free element's link there. x64: a link takes 8 bytes, and with 4-byte elements a free wrote half of its link into
+// the next element (a free neighbour's link half overwritten, the list then followed garbage).
+#ifdef OPENRFG_X64
+static const unsigned int Zero_list_align = sizeof(void*);
+#else
+static const unsigned int Zero_list_align = 4;
+#endif
+
 // 0x00CF50D0 (:325)
 // Every free list gets the same block size.
 void hkFreeListAllocator::setFixedSizeCinfo(unsigned int blockSize, Cinfo& info)
@@ -111,7 +120,7 @@ void hkFreeListAllocator::setFixedSizeCinfo(unsigned int blockSize, Cinfo& info)
     info.m_preferedBlockSize = blockSize;
     info.add(0x200, 0x80, blockSize);
     info.add(0x100, 0x20, blockSize);
-    info.add(0, 4, blockSize);
+    info.add(0, Zero_list_align, blockSize);
     info.add(0x280, 0x80, blockSize);
     for (unsigned int size = 0x200; (int)size > 0xF; size -= 0x10)
     {
@@ -130,7 +139,7 @@ void hkFreeListAllocator::setDefaultCinfo(Cinfo& info)
 {
     info.add(0x200, 0x80, 0x4000);
     info.add(0x100, 0x20, 0x4000);
-    info.add(0, 4, 0x100);
+    info.add(0, Zero_list_align, 0x100);
     info.add(0x280, 0x80, 0x4000);
     for (unsigned int size = 0x200; (int)size > 0xF; size -= 0x10)
     {
