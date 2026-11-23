@@ -330,6 +330,10 @@ void hkFreeListAllocator::blockFree(void* p, int nbytes)
     {
         return;
     }
+    if (hkMemtestFreeHook != nullptr)
+    {
+        hkMemtestFreeHook(p, nbytes, nbytes); // memtest: Memtest.HkCheck (before the lock)
+    }
     Lock lock(m_criticalSection);
     if (nbytes <= MAX_FREELIST_SIZE)
     {

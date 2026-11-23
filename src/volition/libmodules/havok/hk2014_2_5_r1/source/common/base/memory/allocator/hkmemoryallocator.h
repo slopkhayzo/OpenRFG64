@@ -69,3 +69,9 @@ struct hkMemoryAllocator::ExtendedInterface
     virtual int addToSnapshot(hkMemorySnapshot& snap, int parentId) = 0; // vtbl+0x24
     ExtendedInterface(); // 0x00CF4A60
 };
+
+// memtest (OpenRFG64-memtest, Memtest.HkCheck): told of each block freed through a thread memory (hkThreadMemory::
+// blockFree, up to its 8 KB rows) or the free list allocator (hkFreeListAllocator::blockFree), before it is cached or
+// listed and outside the heap's lock: list_bytes is the size the heap will file it under (the thread memory's row
+// size). memtest checks it against the free list whose block holds it. Not in rfg.exe. Defined in hkthreadmemory.cpp.
+extern void (*hkMemtestFreeHook)(void* p, int nbytes, int list_bytes);

@@ -613,6 +613,7 @@ void gamestate_gp_enter(game_state prev_state)
 // 0x007F0D30 (:1066)
 void gamestate_gp_exit(game_state new_state)
 {
+    memtest_havok_check("the level's gameplay ends"); // memtest: Memtest.HkCheck
     ui_kill_subtitle();
     gamemusic_update(false);
     mission_system_level_shutdown();

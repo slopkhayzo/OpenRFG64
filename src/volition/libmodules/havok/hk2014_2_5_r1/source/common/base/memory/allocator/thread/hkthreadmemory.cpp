@@ -154,6 +154,8 @@ void* hkThreadMemory::blockAlloc(int nbytes)
     return onRowEmpty(row);
 }
 
+void (*hkMemtestFreeHook)(void* p, int nbytes, int list_bytes) = nullptr; // memtest (hkmemoryallocator.h)
+
 // 0x00D0FC80 (:244)
 void hkThreadMemory::blockFree(void* p, int nbytes)
 {
@@ -167,6 +169,10 @@ void hkThreadMemory::blockFree(void* p, int nbytes)
         return;
     }
     const int row = getRow(nbytes);
+    if (hkMemtestFreeHook != nullptr)
+    {
+        hkMemtestFreeHook(p, nbytes, m_row_to_size_lut[row]); // memtest: Memtest.HkCheck
+    }
     if (m_free_list[row].m_numElem >= m_maxNumElemsOnFreeList)
     {
         onRowFull(row, p);

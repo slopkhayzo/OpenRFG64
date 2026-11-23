@@ -37,6 +37,9 @@ void memtest_level_event(const char* what);
 // (gamestate_gp_exit's end).
 void memtest_level_load_start();
 void memtest_level_gameplay_end();
+// Memtest.HkCheck=N (OPENRFG_MEMTEST_HKCHECK): Havok's heap free lists checked every N seconds and at these calls
+// (gamestate_gp_exit's start, the garbage collections of havok_level_shutdown and havok_level_init_pre).
+void memtest_havok_check(const char* when);
 
 // ---- what the recovered code reports
 void memtest_pool_register(mempool_base* pool);

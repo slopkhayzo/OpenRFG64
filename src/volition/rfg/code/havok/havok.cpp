@@ -1864,6 +1864,7 @@ void havok_level_init_pre()
         havok_multiplayer_level_init_pre();
     }
     havok_bpo_level_init_pre();
+    memtest_havok_check("before the loading level's Havok garbage collection"); // memtest: Memtest.HkCheck
     hkMemorySystem::getInstance().garbageCollect();
 }
 
@@ -1881,6 +1882,7 @@ void havok_level_shutdown()
         havok_multiplayer_level_shutdown();
     }
     havok_bpo_level_shutdown();
+    memtest_havok_check("before the level's Havok garbage collection"); // memtest: Memtest.HkCheck
     hkMemorySystem::getInstance().garbageCollect();
 }
 

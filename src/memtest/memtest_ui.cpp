@@ -17,12 +17,16 @@
 #include "volition/interface_lib/code/vint_document.h"
 #include "volition/interface_lib/code/vint_variant.h"
 #include "volition/rfg/code/gameplay/mission_info.h"
+#include "volition/rfg/code/gamewide/game_save.h"
 #include "volition/rfg/code/gamewide/game_trace.h"
 #include "volition/rfg/code/gamewide/gameseq.h"
+#include "volition/rfg/code/gamewide/verify_gamesave.h"
 #include "volition/rfg/code/hud/hud_ui_mission_complete.h"
+#include "volition/rfg/code/level/world.h"
 #include "volition/vlib/code/math/crc.h"
 
 #include <windows.h>
+#include <tlhelp32.h> // Memtest.BmWriteWatch: the process's threads
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -182,6 +186,79 @@ namespace
         Dump_doc = nullptr;
     }
 
+    // ---- Memtest.Reload=N (OPENRFG_MEMTEST_RELOAD): every N seconds of gameplay a save is loaded the way the in-game
+    // Load Game screen loads one (verify_gamesave_start), Memtest.ReloadCount times (OPENRFG_MEMTEST_RELOADCOUNT, default 3),
+    // the slots taken in turn from Memtest.ReloadSlots (OPENRFG_MEMTEST_RELOADSLOTS, default "3,2"). For what a level's
+    // reload leaves behind: the bitmap lists your campaign session found broken after two in-game loads
+    // (research/docs/10-reload-texture-crash.md).
+    int Reload_s = -1;
+    int Reloads_left = 0;
+    int Reloads_done = 0;
+    unsigned long long Reload_gameplay_since = 0;
+    int Reload_slots[12];
+    int Reload_slot_count = 0;
+
+    void reload_test(unsigned long long now, game_state state)
+    {
+        if (Reload_s < 0)
+        {
+            Reload_s = env_int("OPENRFG_MEMTEST_RELOAD", 0);
+            Reloads_left = env_int("OPENRFG_MEMTEST_RELOADCOUNT", 3);
+            char slots[64] = "3,2";
+            GetEnvironmentVariableA("OPENRFG_MEMTEST_RELOADSLOTS", slots, sizeof(slots));
+            for (const char* p = slots; *p != '\0' && Reload_slot_count < 12;)
+            {
+                Reload_slots[Reload_slot_count++] = atoi(p);
+                while (*p != '\0' && *p != ',')
+                {
+                    p++;
+                }
+                if (*p == ',')
+                {
+                    p++;
+                }
+            }
+        }
+        if (Reload_s <= 0 || Reloads_left <= 0 || Reload_slot_count == 0)
+        {
+            return;
+        }
+        if (state != GS_GAMEPLAY || gameseq_in_transition())
+        {
+            Reload_gameplay_since = 0;
+            return;
+        }
+        if (Reload_gameplay_since == 0)
+        {
+            Reload_gameplay_since = now;
+            return;
+        }
+        if (now - Reload_gameplay_since < (unsigned long long)Reload_s * 1000ull)
+        {
+            return;
+        }
+        Reload_gameplay_since = 0;
+        const int slot = Reload_slots[Reloads_done % Reload_slot_count];
+        // Magic number: the save file has 12 slots (game_save_generic.cpp's Num_save_slots), as command_line_load_slot.
+        static game_save_info Saves[12];
+        World.dlc_bundle_id = -1;
+        const int count = game_save_get_list(Saves, game_save_get_list_buf_size(12), 12, false);
+        for (int i = 0; i < count; i++)
+        {
+            if (Saves[i].used_slot && (int)Saves[i].save_slot_index == slot)
+            {
+                Reloads_done++;
+                Reloads_left--;
+                memtest_event("reload test: loading save slot %d from gameplay (load %d, %d more to come)", slot, Reloads_done, Reloads_left);
+                GAME_TRACE("memtest", "reload test: loading save slot %d from gameplay (load %d)", slot, Reloads_done);
+                verify_gamesave_start(&Saves[i], false);
+                return;
+            }
+        }
+        memtest_event("reload test: no save in slot %d: the test ends", slot);
+        Reloads_left = 0;
+    }
+
     int Mc_test_s = -1;
     unsigned long long Gameplay_since = 0;
     bool Shown = false;
@@ -190,8 +267,223 @@ namespace
     const float Dump_times[] = {0.3f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.5f, 8.0f, 10.0f};
 }
 
+void bm_memtest_watch_lists(int first, int last); // bmpman.cpp (memtest): Memtest.BmWatch
+void* bm_memtest_shown_next_field(int handle);   // bmpman.cpp (memtest): Memtest.BmWriteWatch
+const char* bm_memtest_peg_of(const void* p);    // bmpman.cpp (memtest)
+
+namespace
+{
+    // ---- Memtest.BmWriteWatch=h[,h...] (OPENRFG_MEMTEST_BMWRITEWATCH, up to 4 bitmaps): from the first gameplay frame,
+    // a hardware write watch (debug registers DR0-DR3, on every thread, armed again each second for new threads) on
+    // the link (next offset) of the entry each bitmap shows. In the reload runs the always_loaded entries' links of
+    // bitmaps 6-11 were all rewritten during the second in-game load's teardown, by no list edit of bmpman
+    // (research/docs/10-reload-texture-crash.md). Each write is written to the game trace ("bmwrite") with the
+    // instruction after it, the value and what it points to, and the program addresses on the writing thread's stack
+    // (tools/re/pdb_addr.py names them). Writes from the kernel (a file read into that memory) do not trap.
+    void* Ww_fields[4] = {};
+    int Ww_handles[4] = {};
+    int Ww_count = 0;
+    volatile long Ww_hits = 0;
+    uintptr_t Ww_image_lo = 0;
+    uintptr_t Ww_image_hi = 0;
+
+    LONG CALLBACK ww_handler(EXCEPTION_POINTERS* info)
+    {
+        if (info->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
+        {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        CONTEXT* c = info->ContextRecord;
+        int which = -1;
+        for (int k = 0; k < Ww_count; k++)
+        {
+            if ((c->Dr6 & (1ull << k)) != 0)
+            {
+                which = k;
+                break;
+            }
+        }
+        if (which < 0)
+        {
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        c->Dr6 = 0;
+        if (_InterlockedIncrement(&Ww_hits) <= 60)
+        {
+            char stack[600] = "";
+            size_t len = 0;
+            const unsigned long long* sp = (const unsigned long long*)c->Rsp;
+            for (int i = 0, found = 0; i < 160 && found < 16 && len + 24 < sizeof(stack); i++)
+            {
+                const unsigned long long v = sp[i]; // the thread's own stack: readable
+                if (v >= Ww_image_lo && v < Ww_image_hi)
+                {
+                    len += (size_t)snprintf(stack + len, sizeof(stack) - len, " exe+0x%llX", v - Ww_image_lo);
+                    found++;
+                }
+            }
+            const int value = *(const int*)Ww_fields[which];
+            const char* target = value == 0 || value == -1 ? nullptr : (const char*)Ww_fields[which] + value;
+            GAME_TRACE("bmwrite", "bitmap %d: the link of its shown entry (%p, %s) written: offset %d -> %p (%s); thread %lu, the instruction "
+                       "after the write at %s0x%llX; program addresses on its stack:%s",
+                       Ww_handles[which], Ww_fields[which], bm_memtest_peg_of(Ww_fields[which]), value, (const void*)target,
+                       target != nullptr ? bm_memtest_peg_of(target) : "-", GetCurrentThreadId(),
+                       c->Rip >= Ww_image_lo && c->Rip < Ww_image_hi ? "exe+" : "", (unsigned long long)(c->Rip >= Ww_image_lo && c->Rip < Ww_image_hi ? c->Rip - Ww_image_lo : c->Rip),
+                       stack);
+        }
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+
+    // Arms the watch on one thread (suspended meanwhile; nothing here allocates).
+    void ww_arm(DWORD id)
+    {
+        HANDLE t = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME, FALSE, id);
+        if (t == nullptr)
+        {
+            return;
+        }
+        if (SuspendThread(t) != (DWORD)-1)
+        {
+            CONTEXT c = {};
+            c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+            if (GetThreadContext(t, &c))
+            {
+                DWORD64* drs[4] = {&c.Dr0, &c.Dr1, &c.Dr2, &c.Dr3};
+                DWORD64 dr7 = c.Dr7;
+                bool change = false;
+                for (int k = 0; k < Ww_count; k++)
+                {
+                    if (*drs[k] != (DWORD64)(uintptr_t)Ww_fields[k])
+                    {
+                        *drs[k] = (DWORD64)(uintptr_t)Ww_fields[k];
+                        change = true;
+                    }
+                    // Lk on; RWk = 01 (writes), LENk = 11 (4 bytes)
+                    const DWORD64 mask = (3ull << (k * 2)) | (0xFull << (16 + k * 4));
+                    dr7 = (dr7 & ~mask) | (1ull << (k * 2)) | (1ull << (16 + k * 4)) | (3ull << (18 + k * 4));
+                }
+                if (dr7 != c.Dr7)
+                {
+                    c.Dr7 = dr7;
+                    change = true;
+                }
+                if (change)
+                {
+                    SetThreadContext(t, &c);
+                }
+            }
+            ResumeThread(t);
+        }
+        CloseHandle(t);
+    }
+
+    DWORD WINAPI ww_installer(void*)
+    {
+        const DWORD self = GetCurrentThreadId();
+        const DWORD process = GetCurrentProcessId();
+        static DWORD ids[4096];
+        for (;;)
+        {
+            int n = 0;
+            HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if (snap != INVALID_HANDLE_VALUE)
+            {
+                THREADENTRY32 te;
+                te.dwSize = sizeof(te);
+                for (BOOL ok = Thread32First(snap, &te); ok && n < 4096; ok = Thread32Next(snap, &te))
+                {
+                    if (te.th32OwnerProcessID == process && te.th32ThreadID != self)
+                    {
+                        ids[n++] = te.th32ThreadID;
+                    }
+                }
+                CloseHandle(snap);
+            }
+            for (int i = 0; i < n; i++)
+            {
+                ww_arm(ids[i]);
+            }
+            Sleep(1000);
+        }
+    }
+
+    void ww_start()
+    {
+        static bool tried = false;
+        if (tried)
+        {
+            return;
+        }
+        tried = true;
+        char value[64];
+        const DWORD n = GetEnvironmentVariableA("OPENRFG_MEMTEST_BMWRITEWATCH", value, sizeof(value));
+        if (n == 0 || n >= sizeof(value))
+        {
+            return;
+        }
+        for (const char* p = value; *p != 0 && Ww_count < 4;)
+        {
+            const int handle = atoi(p);
+            void* field = bm_memtest_shown_next_field(handle);
+            if (field != nullptr)
+            {
+                Ww_handles[Ww_count] = handle;
+                Ww_fields[Ww_count] = field;
+                Ww_count++;
+                GAME_TRACE("bmwrite", "watching bitmap %d's shown entry's link at %p (%s), now offset %d", handle, field, bm_memtest_peg_of(field),
+                           *(const int*)field);
+            }
+            const char* comma = strchr(p, ',');
+            if (comma == nullptr)
+            {
+                break;
+            }
+            p = comma + 1;
+        }
+        if (Ww_count == 0)
+        {
+            return;
+        }
+        const unsigned char* base = (const unsigned char*)GetModuleHandleA(nullptr);
+        const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(base + ((const IMAGE_DOS_HEADER*)base)->e_lfanew);
+        Ww_image_lo = (uintptr_t)base;
+        Ww_image_hi = Ww_image_lo + nt->OptionalHeader.SizeOfImage;
+        AddVectoredExceptionHandler(1, ww_handler);
+        HANDLE t = CreateThread(nullptr, 0, ww_installer, nullptr, 0, nullptr);
+        if (t != nullptr)
+        {
+            CloseHandle(t);
+        }
+        memtest_event("bm write watch: %d fields watched on every thread (debug registers)", Ww_count);
+    }
+}
+
 void memtest_ui_frame()
 {
+    reload_test(GetTickCount64(), gameseq_get_state());
+    // Memtest.BmWatch=first,last (OPENRFG_MEMTEST_BMWATCH): those bitmaps' entry lists, written each time one changes.
+    static int Bm_watch_first = -2;
+    static int Bm_watch_last = -1;
+    if (Bm_watch_first == -2)
+    {
+        Bm_watch_first = -1;
+        char value[32];
+        const DWORD n = GetEnvironmentVariableA("OPENRFG_MEMTEST_BMWATCH", value, sizeof(value));
+        if (n > 0 && n < sizeof(value))
+        {
+            Bm_watch_first = atoi(value);
+            const char* comma = strchr(value, ',');
+            Bm_watch_last = comma != nullptr ? atoi(comma + 1) : Bm_watch_first;
+        }
+    }
+    if (Bm_watch_first >= 0)
+    {
+        bm_memtest_watch_lists(Bm_watch_first, Bm_watch_last);
+    }
+    if (gameseq_get_state() == GS_GAMEPLAY)
+    {
+        ww_start(); // Memtest.BmWriteWatch, from the first gameplay frame
+    }
     if (Mc_test_s < 0)
     {
         Mc_test_s = env_int("OPENRFG_MEMTEST_MCTEST", 0);

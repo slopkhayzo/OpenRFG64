@@ -1356,6 +1356,465 @@ namespace
                       (double)(sys.m_inUse - blocks) / mb);
     }
 
+    // ---- Memtest.HkCheck=N (OPENRFG_MEMTEST_HKCHECK): every N seconds, at the start of a level's gameplay exit and
+    // before the garbage collections of its Havok shutdown and of the next level's load, every free list of Havok's
+    // heap allocator is walked under its lock. Each free element must be an element of one of that list's active blocks, at an element's start, outside
+    // the current block's unused top, and the walk must end within the list's count. A campaign session crashed in the
+    // shutdown's garbage collection, sorting a free list (hkFreeList::findGarbage under gamestate_gp_exit, 2026-11-22):
+    // a free element's link led nowhere. The first bad link of a list is described once: what it leads to (another
+    // list's element: a free with the wrong size; nothing; a cycle: a double free), and the bytes of the element that
+    // holds it, i.e. what was written into a free element (an object's vtable names its class).
+    int Hk_check_s = 0;
+    unsigned long long Last_hk_check_ms = 0;
+    unsigned int Hk_checks = 0;
+    unsigned int Hk_bad_checks = 0;
+    volatile long Hk_wrong_frees = 0; // frees whose block is another list's (hk_free_hook)
+    bool Hk_list_reported[hkFreeListAllocator::MAX_FREELISTS + 1] = {};
+
+    struct hk_range
+    {
+        uintptr_t begin;
+        uintptr_t end;
+        int list;
+        bool free_block; // a block of the list's m_freeBlocks (all of it free, none of it on m_free)
+    };
+
+    bool hk_read_bytes(const void* p, void* out, size_t n)
+    {
+        __try
+        {
+            memcpy(out, p, n);
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+
+    // The range holding p (the ranges sorted and apart), or -1.
+    int hk_find_range(const std::vector<hk_range>& ranges, uintptr_t p)
+    {
+        size_t lo = 0;
+        size_t hi = ranges.size();
+        while (lo < hi)
+        {
+            const size_t mid = (lo + hi) / 2;
+            if (ranges[mid].end <= p)
+            {
+                lo = mid + 1;
+            }
+            else
+            {
+                hi = mid;
+            }
+        }
+        return lo < ranges.size() && ranges[lo].begin <= p ? (int)lo : -1;
+    }
+
+    // A block list's element ranges. False if a block header could not be read or the list does not end.
+    bool hk_add_blocks(std::vector<hk_range>& ranges, const hkFreeList* list, int index, const hkFreeList::Block* b, bool free_blocks)
+    {
+        for (int n = 0; b != nullptr; n++)
+        {
+            hkFreeList::Block blk;
+            if (n >= 50000000 || !hk_read_bytes(b, &blk, sizeof(blk)))
+            {
+                return false;
+            }
+            const uintptr_t begin = (uintptr_t)blk.m_elements;
+            ranges.push_back({begin, begin + (uintptr_t)blk.m_numElements * list->m_elementSize, index, free_blocks});
+            b = blk.m_next;
+        }
+        return true;
+    }
+
+    // The bytes of a free element, as 8-byte words; those pointing into the program named by their offset in it.
+    void hk_describe_bytes(uintptr_t at, unsigned int size, char* out, size_t out_size)
+    {
+        size_t len = 0;
+        out[0] = 0;
+        const unsigned int words = (size < 64 ? size : 64) / 8;
+        for (unsigned int w = 0; w < words && len + 40 < out_size; w++)
+        {
+            unsigned long long v = 0;
+            if (!hk_read_bytes((const void*)(at + w * 8), &v, 8))
+            {
+                len += snprintf(out + len, out_size - len, " (unreadable)");
+                break;
+            }
+            if (v >= Image_lo && v < Image_hi)
+            {
+                len += snprintf(out + len, out_size - len, " exe+0x%llX", v - Image_lo);
+            }
+            else
+            {
+                len += snprintf(out + len, out_size - len, " %016llX", v);
+            }
+        }
+    }
+
+    unsigned int hk_list_count(const hkFreeListAllocator* heap)
+    {
+        return (unsigned int)heap->m_numFreeLists + 1;
+    }
+
+    const hkFreeList* hk_list_at(const hkFreeListAllocator* heap, unsigned int i)
+    {
+        return i == (unsigned int)heap->m_numFreeLists ? &heap->m_blockAllocator.m_freeList : heap->m_freeLists[i];
+    }
+
+    // How many of a free list's elements lie in other lists' blocks, written when the count changed since the last check.
+    unsigned int Hk_foreign_last[hkFreeListAllocator::MAX_FREELISTS + 1] = {};
+
+    void hk_report_foreign(const char* when, const hkFreeList* list, unsigned int i, unsigned int foreign, unsigned int at_start,
+                           const unsigned int* sizes, const unsigned int* counts)
+    {
+        if (foreign == Hk_foreign_last[i])
+        {
+            return;
+        }
+        Hk_foreign_last[i] = foreign;
+        char by_size[160] = "";
+        size_t len = 0;
+        for (int k = 0; k < 8 && sizes[k] != 0 && len + 24 < sizeof(by_size); k++)
+        {
+            len += (size_t)snprintf(by_size + len, sizeof(by_size) - len, " %u in %u-byte blocks", counts[k], sizes[k]);
+        }
+        memtest_event("hkcheck (%s): the %u-byte free list holds %u elements of other lists' blocks (%u of them at an element's start):%s",
+                      when, list->m_elementSize, foreign, at_start, foreign != 0 ? by_size : " none now");
+    }
+
+    // Walks one free list. Returns false if a link was bad (the first bad link of a list described once per session).
+    // Elements of another list's blocks (a free with the wrong size) are counted and the walk goes on through them
+    // (their link is the list's own), the first three of a check described with their own bytes; the walk stops at a
+    // link it cannot follow.
+    bool hk_walk_free_list(const hkFreeListAllocator* heap, unsigned int i, const std::vector<hk_range>& ranges, const char* when,
+                           unsigned long long& walked)
+    {
+        const hkFreeList* list = hk_list_at(heap, i);
+        const unsigned long long limit = (unsigned long long)list->m_numFreeElements + 1;
+        uintptr_t prev = 0; // the element whose link leads here (0: the list's head)
+        uintptr_t e = (uintptr_t)list->m_free;
+        unsigned long long steps = 0;
+        unsigned int foreign = 0;      // elements of other lists' blocks
+        unsigned int foreign_at_start = 0; // of them, at the start of one of that list's elements
+        unsigned int foreign_by_size[8] = {};
+        unsigned int foreign_sizes[8] = {};
+        while (e != 0)
+        {
+            const char* problem = nullptr;
+            unsigned int other_size = 0;
+            steps++;
+            if (steps > limit)
+            {
+                problem = "one more than the list counts free (a cycle: an element freed twice)";
+            }
+            else if (list->m_align != 0 && (e & (list->m_align - 1)) != 0)
+            {
+                problem = "misaligned";
+            }
+            else
+            {
+                const int r = hk_find_range(ranges, e);
+                if (r < 0)
+                {
+                    problem = "no free list's element (outside every block)";
+                }
+                else if ((unsigned int)ranges[r].list != i)
+                {
+                    other_size = hk_list_at(heap, (unsigned int)ranges[r].list)->m_elementSize;
+                    const bool at_start = other_size != 0 && (e - ranges[r].begin) % other_size == 0;
+                    foreign++;
+                    foreign_at_start += at_start ? 1 : 0;
+                    for (int k = 0; k < 8; k++)
+                    {
+                        if (foreign_sizes[k] == other_size || foreign_sizes[k] == 0)
+                        {
+                            foreign_sizes[k] = other_size;
+                            foreign_by_size[k]++;
+                            break;
+                        }
+                    }
+                    if (foreign <= 3)
+                    {
+                        char own[640];
+                        hk_describe_bytes(e, other_size < 64 ? other_size : 64, own, sizeof(own));
+                        memtest_event("hkcheck (%s): the %u-byte free list's element %llu, 0x%llX, lies in a block of the %u-byte list (%s, "
+                                      "%llu bytes into its block%s); its bytes:%s",
+                                      when, list->m_elementSize, steps, (unsigned long long)e, other_size,
+                                      at_start ? "at the start of one of its elements" : "inside one of its elements",
+                                      (unsigned long long)(e - ranges[r].begin), ranges[r].free_block ? ", a free block" : "", own);
+                    }
+                }
+                else if (ranges[r].free_block)
+                {
+                    problem = "inside one of the list's free blocks";
+                }
+                else if ((e - ranges[r].begin) % list->m_elementSize != 0)
+                {
+                    problem = "not at an element's start";
+                }
+                else if (e >= (uintptr_t)list->m_top && e < (uintptr_t)list->m_blockEnd)
+                {
+                    problem = "in the current block's unused top (handed out twice)";
+                }
+            }
+            uintptr_t next = 0;
+            if (problem == nullptr && !hk_read_bytes((const void*)e, &next, sizeof(next)))
+            {
+                problem = "unreadable";
+            }
+            if (problem != nullptr)
+            {
+                if (!Hk_list_reported[i])
+                {
+                    Hk_list_reported[i] = true;
+                    char bytes[640];
+                    hk_describe_bytes(prev != 0 ? prev : (uintptr_t)&list->m_free, prev != 0 ? list->m_elementSize : 8, bytes,
+                                      sizeof(bytes));
+                    memtest_event("hkcheck (%s): the free list of %u-byte elements is broken at its element %llu of %u counted free: "
+                                  "0x%llX is %s. The link to it is in %s 0x%llX, whose bytes are:%s",
+                                  when, list->m_elementSize, steps, list->m_numFreeElements, (unsigned long long)e, problem,
+                                  prev != 0 ? "the free element" : "the list's head", (unsigned long long)(prev != 0 ? prev : (uintptr_t)&list->m_free),
+                                  bytes);
+                }
+                walked += steps;
+                hk_report_foreign(when, list, i, foreign, foreign_at_start, foreign_sizes, foreign_by_size);
+                return false;
+            }
+            prev = e;
+            e = next;
+        }
+        walked += steps;
+        hk_report_foreign(when, list, i, foreign, foreign_at_start, foreign_sizes, foreign_by_size);
+        return foreign == 0;
+    }
+
+    void hk_check_free_lists(const char* when, bool always_log)
+    {
+        hkMemorySystem* instance = hkMemorySystem::getInstancePtr();
+        hkFreeListMemorySystem* system = static_cast<hkFreeListMemorySystem*>(instance);
+        if (system == nullptr || system->m_heapAllocator == nullptr)
+        {
+            return;
+        }
+        hkFreeListAllocator* heap = static_cast<hkFreeListAllocator*>(system->m_heapAllocator);
+        const unsigned long long t0 = GetTickCount64();
+        std::vector<hk_range> ranges;
+        ranges.reserve(1 << 16);
+        unsigned int bad = 0;
+        unsigned int unreadable_blocks = 0;
+        unsigned long long walked = 0;
+        heap->m_criticalSection.enter();
+        const unsigned int lists = hk_list_count(heap);
+        if (Hk_checks == 0)
+        {
+            char sizes[400] = "";
+            size_t len = 0;
+            for (unsigned int i = 0; i < lists && len + 16 < sizeof(sizes); i++)
+            {
+                const hkFreeList* list = hk_list_at(heap, i);
+                len += (size_t)snprintf(sizes + len, sizeof(sizes) - len, " %u%s", list != nullptr ? list->m_elementSize : 0,
+                                        i == lists - 1 ? " (the block headers')" : "");
+            }
+            memtest_event("hkcheck: Havok's heap has %u free lists, their element sizes:%s", lists, sizes);
+        }
+        for (unsigned int i = 0; i < lists; i++)
+        {
+            const hkFreeList* list = hk_list_at(heap, i);
+            if (list == nullptr)
+            {
+                continue;
+            }
+            if (!hk_add_blocks(ranges, list, (int)i, list->m_activeBlocks, false) ||
+                !hk_add_blocks(ranges, list, (int)i, list->m_freeBlocks, true))
+            {
+                unreadable_blocks++;
+                if (!Hk_list_reported[i])
+                {
+                    Hk_list_reported[i] = true;
+                    memtest_event("hkcheck (%s): the block list of the %u-byte free list is broken (a block header unreadable, "
+                                  "or no end)", when, list->m_elementSize);
+                }
+            }
+        }
+        std::sort(ranges.begin(), ranges.end(), [](const hk_range& a, const hk_range& b) { return a.begin < b.begin; });
+        // Blocks of two lists (or two blocks of one) in the same memory: the large block allocator handed it out twice.
+        static int overlaps_logged = 0;
+        unsigned int overlaps = 0;
+        for (size_t k = 1; k < ranges.size(); k++)
+        {
+            if (ranges[k].begin < ranges[k - 1].end)
+            {
+                overlaps++;
+                if (overlaps_logged++ < 5)
+                {
+                    memtest_event("hkcheck (%s): blocks overlap: [0x%llX, 0x%llX) of the %u-byte list%s and [0x%llX, 0x%llX) of the %u-byte "
+                                  "list%s",
+                                  when, (unsigned long long)ranges[k - 1].begin, (unsigned long long)ranges[k - 1].end,
+                                  hk_list_at(heap, (unsigned int)ranges[k - 1].list)->m_elementSize, ranges[k - 1].free_block ? " (free)" : "",
+                                  (unsigned long long)ranges[k].begin, (unsigned long long)ranges[k].end,
+                                  hk_list_at(heap, (unsigned int)ranges[k].list)->m_elementSize, ranges[k].free_block ? " (free)" : "");
+                }
+            }
+        }
+        bad += overlaps != 0 ? 1 : 0;
+        for (unsigned int i = 0; i < lists; i++)
+        {
+            if (hk_list_at(heap, i) != nullptr && !hk_walk_free_list(heap, i, ranges, when, walked))
+            {
+                bad++;
+            }
+        }
+        heap->m_criticalSection.leave();
+        Hk_checks++;
+        if (bad != 0 || unreadable_blocks != 0)
+        {
+            Hk_bad_checks++;
+        }
+        if (always_log || bad != 0 || unreadable_blocks != 0 || Hk_checks <= 3 || Hk_checks % 30 == 0)
+        {
+            memtest_event("hkcheck (%s): %u free lists, %zu blocks, %llu free elements walked in %llu ms: %s (checks %u, %u of them "
+                          "with a broken list; wrong-size frees so far %ld)",
+                          when, lists, ranges.size(), walked, GetTickCount64() - t0,
+                          bad == 0 && unreadable_blocks == 0 ? "all good" : "BROKEN", Hk_checks, Hk_bad_checks, Hk_wrong_frees);
+        }
+    }
+
+    // ---- Memtest.HkCheck: every block freed into Havok's heap (hkMemtestFreeHook) is checked against the free list
+    // whose block holds it. The first check of a campaign load found the 16-byte list holding an element of a 48-byte
+    // block 6 s after the start: a block freed with a smaller size than it was allocated with (the thread memory files a
+    // size of 0 under 16 bytes). When that block's list later gives the block back, the 16-byte list points into memory
+    // that is used again: the free list sort of a garbage collection then follows garbage (the crash on quitting). Each
+    // free whose block is another list's is written once per call stack, with the stack as offsets into the program
+    // (tools/re/pdb_addr.py names them). The blocks are indexed, and the index is rebuilt whenever a list's element
+    // total changed (it gained or lost a block).
+    SRWLOCK Hk_index_lock = SRWLOCK_INIT;
+    std::vector<hk_range>* Hk_index = nullptr; // the heap's blocks, sorted (CRT heap: no Havok memory)
+    unsigned long long Hk_index_signature = 0;
+    SRWLOCK Hk_stacks_lock = SRWLOCK_INIT;
+    unsigned long long Hk_stacks_seen[256] = {};
+    int Hk_stacks_count = 0;
+
+    // Changes when a list gains or loses a block (its element total), read without the lock: a hint only.
+    unsigned long long hk_blocks_signature(const hkFreeListAllocator* heap)
+    {
+        unsigned long long sig = 0;
+        const unsigned int lists = hk_list_count(heap);
+        for (unsigned int i = 0; i < lists; i++)
+        {
+            const hkFreeList* list = hk_list_at(heap, i);
+            if (list != nullptr)
+            {
+                sig = sig * 1000003ull + list->m_totalNumElements;
+            }
+        }
+        return sig;
+    }
+
+    void hk_rebuild_index(hkFreeListAllocator* heap)
+    {
+        std::vector<hk_range> fresh;
+        fresh.reserve(Hk_index != nullptr ? Hk_index->size() + 256 : 4096);
+        heap->m_criticalSection.enter();
+        const unsigned int lists = hk_list_count(heap);
+        for (unsigned int i = 0; i < lists; i++)
+        {
+            const hkFreeList* list = hk_list_at(heap, i);
+            if (list != nullptr)
+            {
+                hk_add_blocks(fresh, list, (int)i, list->m_activeBlocks, false);
+                hk_add_blocks(fresh, list, (int)i, list->m_freeBlocks, true);
+            }
+        }
+        const unsigned long long sig = hk_blocks_signature(heap);
+        heap->m_criticalSection.leave();
+        std::sort(fresh.begin(), fresh.end(), [](const hk_range& a, const hk_range& b) { return a.begin < b.begin; });
+        AcquireSRWLockExclusive(&Hk_index_lock);
+        Hk_index->swap(fresh);
+        Hk_index_signature = sig;
+        ReleaseSRWLockExclusive(&Hk_index_lock);
+    }
+
+    // The list whose block holds p (-1: none) from the index.
+    int hk_index_list_of(uintptr_t p, bool& free_block)
+    {
+        AcquireSRWLockShared(&Hk_index_lock);
+        const int r = hk_find_range(*Hk_index, p);
+        const int list = r >= 0 ? (*Hk_index)[r].list : -1;
+        free_block = r >= 0 && (*Hk_index)[r].free_block;
+        ReleaseSRWLockShared(&Hk_index_lock);
+        return list;
+    }
+
+    void hk_free_hook(void* p, int nbytes, int list_bytes)
+    {
+        hkFreeListMemorySystem* system = static_cast<hkFreeListMemorySystem*>(hkMemorySystem::getInstancePtr());
+        if (system == nullptr || system->m_heapAllocator == nullptr || Hk_index == nullptr)
+        {
+            return;
+        }
+        hkFreeListAllocator* heap = static_cast<hkFreeListAllocator*>(system->m_heapAllocator);
+        const hkFreeList* expected = list_bytes >= 0 && list_bytes <= hkFreeListAllocator::MAX_FREELIST_SIZE
+                                         ? heap->m_sizeToFreeList[(list_bytes + 15) >> 4]
+                                         : nullptr;
+        if (hk_blocks_signature(heap) != Hk_index_signature)
+        {
+            hk_rebuild_index(heap);
+        }
+        bool free_block = false;
+        const int actual = hk_index_list_of((uintptr_t)p, free_block);
+        const hkFreeList* actual_list = actual >= 0 ? hk_list_at(heap, (unsigned int)actual) : nullptr;
+        if ((actual_list == expected && !free_block) || (actual_list == nullptr && expected == nullptr))
+        {
+            return;
+        }
+        const long count = _InterlockedIncrement(&Hk_wrong_frees);
+        void* frames[14] = {};
+        const USHORT n = RtlCaptureStackBackTrace(1, 14, frames, nullptr);
+        unsigned long long key = 1469598103934665603ull;
+        for (USHORT k = 0; k < n && k < 8; k++)
+        {
+            key = (key ^ (unsigned long long)(uintptr_t)frames[k]) * 1099511628211ull;
+        }
+        bool fresh_stack = false;
+        AcquireSRWLockExclusive(&Hk_stacks_lock);
+        bool seen = false;
+        for (int k = 0; k < Hk_stacks_count; k++)
+        {
+            seen |= Hk_stacks_seen[k] == key;
+        }
+        if (!seen && Hk_stacks_count < 256)
+        {
+            Hk_stacks_seen[Hk_stacks_count++] = key;
+            fresh_stack = true;
+        }
+        ReleaseSRWLockExclusive(&Hk_stacks_lock);
+        if (!fresh_stack)
+        {
+            return;
+        }
+        char stack[600] = "";
+        size_t len = 0;
+        for (USHORT k = 0; k < n && len + 32 < sizeof(stack); k++)
+        {
+            const uintptr_t a = (uintptr_t)frames[k];
+            len += (size_t)snprintf(stack + len, sizeof(stack) - len, a >= Image_lo && a < Image_hi ? " exe+0x%llX" : " 0x%llX",
+                                    (unsigned long long)(a >= Image_lo && a < Image_hi ? a - Image_lo : a));
+        }
+        char bytes[640];
+        hk_describe_bytes((uintptr_t)p, 48, bytes, sizeof(bytes));
+        memtest_event("hkcheck: wrong-size free %ld: 0x%llX freed as %d bytes (filed under the %u-byte list) lies in a %s of the %s; "
+                      "the caller's stack:%s; its bytes:%s",
+                      count, (unsigned long long)(uintptr_t)p, nbytes, expected != nullptr ? expected->m_elementSize : 0,
+                      free_block ? "free block" : "block", actual_list != nullptr ? "list below" : "no free list (a large block)", stack, bytes);
+        if (actual_list != nullptr)
+        {
+            memtest_event("hkcheck: wrong-size free %ld: its block is the %u-byte list's", count, actual_list->m_elementSize);
+        }
+    }
+
     // The audio bank allocator (RFG_Audio_Bank, TLSF over 190 MB) by its blocks, under its lock: whether a level's
     // banks are still there when the next one loads (its keen counters are not kept: they read 0 in use).
     struct tlsf_sum
@@ -1674,6 +2133,12 @@ void memtest_init()
         Hk_live->reserve(1 << 22);
         hkReferencedObjectTracker = hk_track;
     }
+    Hk_check_s = env_int("OPENRFG_MEMTEST_HKCHECK", 0);
+    if (Hk_check_s > 0) // every Havok free checked against the list whose block holds it (before Havok starts)
+    {
+        Hk_index = new std::vector<hk_range>();
+        hkMemtestFreeHook = hk_free_hook;
+    }
     scaling_static_init_done(); // scaling: pools made from now on keep the game's fixed storage
 #ifdef OPENRFG_X64
     et_far::On_new_entry = note_far_entry;
@@ -1781,6 +2246,11 @@ void memtest_frame()
     memtest_ui_frame();
     const unsigned long long now = GetTickCount64();
     wc_repeat(now);
+    if (Hk_check_s > 0 && now - Last_hk_check_ms >= (unsigned long long)Hk_check_s * 1000ull)
+    {
+        Last_hk_check_ms = now;
+        hk_check_free_lists("periodic", false);
+    }
     if (now - Last_census_ms >= Interval_ms)
     {
         Last_census_ms = now;
@@ -1809,6 +2279,14 @@ void memtest_frame()
 void memtest_level_event(const char* what)
 {
     memtest_event("level: %s", what);
+}
+
+void memtest_havok_check(const char* when)
+{
+    if (Initialized && Hk_check_s > 0)
+    {
+        hk_check_free_lists(when, true);
+    }
 }
 
 #ifdef OPENRFG_X64

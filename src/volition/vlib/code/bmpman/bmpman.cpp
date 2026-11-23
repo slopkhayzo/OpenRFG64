@@ -43,6 +43,7 @@
 
 #include <intrin.h>
 #include <stdio.h>
+#include <stdlib.h> // memtest: getenv (Memtest.BmWatch's journal)
 #include <string.h>
 
 // size 0x14 (layout from the PDB)
@@ -138,20 +139,92 @@ void bitmap_entry::fill(const bitmap_entry_serialized* src)
     user_data = src->user_data;
 }
 
+// memtest (OpenRFG64-memtest): the bitmaps of Memtest.BmWatch (OPENRFG_MEMTEST_BMWATCH "first,last") have every edit
+// of their entry lists written to the game trace ("bmlist") from the first peg on, with the peg of each entry.
+static int Bm_journal_first = -2; // -2: the setting not read yet, -1: none
+static int Bm_journal_last = -1;
+
+static bool bm_journaled(const bitmap_entry* be)
+{
+    if (Bm_journal_first == -2)
+    {
+        Bm_journal_first = -1;
+        const char* setting = getenv("OPENRFG_MEMTEST_BMWATCH");
+        int first = 0;
+        int last = 0;
+        if (setting != nullptr && sscanf(setting, "%d,%d", &first, &last) == 2 && first >= 0 && last >= first)
+        {
+            Bm_journal_first = first;
+            Bm_journal_last = last;
+        }
+    }
+    const int handle = (int)(be - Bm_bitmaps);
+    return Bm_journal_first >= 0 && handle >= Bm_journal_first && handle <= Bm_journal_last;
+}
+
+static const peg_file* bm_peg_holding(const peg_entry* pe); // below
+
+static const char* bm_peg_name_of(const peg_entry* pe)
+{
+    if (pe == nullptr)
+    {
+        return "-";
+    }
+    const peg_file* p = bm_peg_holding(pe);
+    return p != nullptr && p->filename != nullptr ? p->filename : "in no loaded peg";
+}
+
+// The entry a link of pe leads to; false if pe cannot be read. No C++ object here: __try.
+static bool bm_read_link(const peg_entry* pe, bool next_link, peg_entry*& out)
+{
+    __try
+    {
+        out = next_link ? pe->next.to_pointer() : pe->prev.to_pointer();
+        return true;
+    }
+    __except (1 /* EXCEPTION_EXECUTE_HANDLER */)
+    {
+        out = nullptr;
+        return false;
+    }
+}
+
 // 0x005C7130 (:208)
 // Unlinks pe from the entry list of be. When pe is shown, the next entry (or the bogus bitmap) takes its place.
+// OpenRFG64-memtest: an entry that is not shown is unlinked only when its neighbours link back to it. One they do not
+// link to is not in the list (it left it, or the list was cut before it), and unlinking it wrote its stale next into
+// the list: after the second in-game load the lists of bitmaps 6-11 got entries of unloaded pegs that way, and the
+// render thread later faulted on one (research/docs/10-reload-texture-crash.md). rfg.exe writes regardless.
 static void remove_from_entry_list(bitmap_entry* be, peg_entry* pe)
 {
     if (be->current_peg_entry != pe)
     {
         peg_entry* next = pe->next.to_pointer();
         peg_entry* prev = pe->prev.to_pointer();
-        if (next != nullptr)
+        peg_entry* prev_next = nullptr;
+        peg_entry* next_prev = nullptr;
+        const bool prev_ok = prev != nullptr && bm_read_link(prev, true, prev_next) && prev_next == pe;
+        const bool next_ok = next == nullptr || (bm_read_link(next, false, next_prev) && next_prev == pe);
+        static int inconsistent_logged = 0;
+        if ((!prev_ok || !next_ok) && inconsistent_logged++ < 200)
         {
-            next->prev.from_pointer(prev);
+            GAME_TRACE("bmlist", "bitmap %d (%s): entry %p (%s) is not in its list: its prev %p (%s) links to %p, its next %p (%s) "
+                       "back to %p; the list is left as it is (shown: %p, %s)",
+                       (int)(be - Bm_bitmaps), be->filename_ptr != nullptr ? be->filename_ptr : "-", (void*)pe, bm_peg_name_of(pe), (void*)prev,
+                       bm_peg_name_of(prev), (void*)prev_next, (void*)next, bm_peg_name_of(next), (void*)next_prev, (void*)be->current_peg_entry,
+                       bm_peg_name_of(be->current_peg_entry));
         }
-        if (prev != nullptr)
+        else if (bm_journaled(be))
         {
+            GAME_TRACE("bmlist", "bitmap %d: - entry %p (%s), between %p (%s) and %p (%s)", (int)(be - Bm_bitmaps), (void*)pe, bm_peg_name_of(pe),
+                       (void*)prev, bm_peg_name_of(prev), (void*)next, bm_peg_name_of(next));
+        }
+        if (prev_ok && next_ok)
+        {
+            if (next != nullptr)
+            {
+                next->prev.from_pointer(prev);
+            }
             prev->next.from_pointer(next);
         }
         if (Tex_unregister_callback != nullptr)
@@ -168,6 +241,11 @@ static void remove_from_entry_list(bitmap_entry* be, peg_entry* pe)
         Tex_unregister_callback(be);
     }
     peg_entry* next = pe->next.to_pointer();
+    if (bm_journaled(be))
+    {
+        GAME_TRACE("bmlist", "bitmap %d: - shown entry %p (%s); now shown: %p (%s)", (int)(be - Bm_bitmaps), (void*)pe, bm_peg_name_of(pe), (void*)next,
+                   next != nullptr ? bm_peg_name_of(next) : "the bogus bitmap");
+    }
     if (next != nullptr)
     {
         be->current_peg_entry = next;
@@ -194,6 +272,11 @@ static void add_to_entry_list(bitmap_entry* be, peg_entry* pe)
             return;
         }
         be->current_peg_entry = pe;
+        if (bm_journaled(be))
+        {
+            GAME_TRACE("bmlist", "bitmap %d: + entry %p (%s), width %u, the only one (shown)", (int)(be - Bm_bitmaps), (void*)pe, bm_peg_name_of(pe),
+                       (unsigned int)pe->width);
+        }
         if (Tex_register_callback != nullptr)
         {
             Tex_register_callback(be);
@@ -231,7 +314,24 @@ static void add_to_entry_list(bitmap_entry* be, peg_entry* pe)
     }
     if (entry == pe)
     {
+        // memtest: pe was in the list already, and its links were cleared above: the entries after it are cut off.
+        static int again_logged = 0;
+        if (again_logged++ < 200)
+        {
+            GAME_TRACE("bmlist", "bitmap %d (%s): entry %p (%s) added again: the list after it is cut off", (int)(be - Bm_bitmaps),
+                       be->filename_ptr != nullptr ? be->filename_ptr : "-", (void*)pe, bm_peg_name_of(pe));
+        }
         return; // already linked
+    }
+    if (bm_journaled(be))
+    {
+        peg_entry* after = nullptr;
+        peg_entry* before = nullptr;
+        bm_read_link(pe, false, after);
+        bm_read_link(pe, true, before);
+        GAME_TRACE("bmlist", "bitmap %d: + entry %p (%s), width %u%s, after %p (%s), before %p (%s)", (int)(be - Bm_bitmaps), (void*)pe,
+                   bm_peg_name_of(pe), (unsigned int)pe->width, be->current_peg_entry == pe ? ", shown" : "", (void*)after, bm_peg_name_of(after),
+                   (void*)before, bm_peg_name_of(before));
     }
     if (Tex_register_callback != nullptr)
     {
@@ -918,6 +1018,122 @@ static bool bm_entry_in(const peg_entry* pe, const unsigned char* lo, const unsi
     return (const unsigned char*)pe >= lo && (const unsigned char*)pe < hi;
 }
 
+// memtest (OpenRFG64-memtest): the loaded peg whose entries hold pe, or null.
+static const peg_file* bm_peg_holding(const peg_entry* pe)
+{
+    for (peg_file* p = Bm_pegs.get_first(); p != nullptr; p = Bm_pegs.get_next(p))
+    {
+        if (p->header == nullptr)
+        {
+            continue;
+        }
+        const unsigned char* lo = (const unsigned char*)(p->header + 1);
+        const unsigned char* hi = lo + p->header->total_entries * (int)sizeof(peg_entry);
+        if (bm_entry_in(pe, lo, hi))
+        {
+            return p;
+        }
+    }
+    return nullptr;
+}
+
+// memtest (OpenRFG64-memtest): a bitmap's entry list node by node (address, the loaded peg that holds it, its raw next
+// offset) up to the node that cannot be read: why a list is unreadable (research/docs/10-reload-texture-crash.md).
+static void bm_describe_list(int handle)
+{
+    const bitmap_entry* be = &Bm_bitmaps[handle];
+    peg_entry* pe = be->current_peg_entry;
+    GAME_TRACE("bmcheck", "  bitmap %d (%s): head %p", handle, be->filename_ptr != nullptr ? be->filename_ptr : "-", (void*)pe);
+    for (int step = 0; pe != nullptr && step < 16; step++)
+    {
+        const peg_file* owner = bm_peg_holding(pe);
+        int next_raw = 0;
+        bool readable = true;
+        __try
+        {
+            next_raw = pe->next.get_offset();
+        }
+        __except (1 /* EXCEPTION_EXECUTE_HANDLER */)
+        {
+            readable = false;
+        }
+        if (!readable)
+        {
+            GAME_TRACE("bmcheck", "    node %d %p (%s): unreadable", step, (void*)pe, owner != nullptr && owner->filename != nullptr ? owner->filename : "in no loaded peg");
+            return;
+        }
+        GAME_TRACE("bmcheck", "    node %d %p (%s): next offset %d", step, (void*)pe, owner != nullptr && owner->filename != nullptr ? owner->filename : "in no loaded peg", next_raw);
+        pe = pe->next.to_pointer();
+    }
+}
+
+// memtest (OpenRFG64-memtest): a signature of a bitmap's list (its nodes' addresses), and whether a node could not be
+// read. No C++ object here: __try.
+static unsigned long long bm_list_signature(int handle, bool& unreadable)
+{
+    unsigned long long sig = 1469598103934665603ull;
+    peg_entry* pe = Bm_bitmaps[handle].current_peg_entry;
+    unreadable = false;
+    for (int step = 0; pe != nullptr && step < 16; step++)
+    {
+        sig = (sig ^ (unsigned long long)(uintptr_t)pe) * 1099511628211ull;
+        __try
+        {
+            pe = pe->next.to_pointer();
+        }
+        __except (1 /* EXCEPTION_EXECUTE_HANDLER */)
+        {
+            unreadable = true;
+            return sig ^ 0xBAD;
+        }
+    }
+    return sig;
+}
+
+// memtest (OpenRFG64-memtest): Memtest.BmWatch=first,last (memtest_ui.cpp, once a frame): the lists of those bitmaps,
+// written node by node each time one changes, to see when and from which peg a list takes a node it cannot keep.
+static void bm_watch_lists_locked(int first, int last)
+{
+    static unsigned long long signatures[64];
+    static bool known[64];
+    for (int handle = first; handle <= last && handle < Bm_entry_count && handle - first < 64; handle++)
+    {
+        bool unreadable = false;
+        const unsigned long long sig = bm_list_signature(handle, unreadable);
+        if (!known[handle - first] || sig != signatures[handle - first])
+        {
+            known[handle - first] = true;
+            signatures[handle - first] = sig;
+            GAME_TRACE("bmwatch", "bitmap %d: its list changed%s", handle, unreadable ? " (a node cannot be read)" : "");
+            bm_describe_list(handle);
+        }
+    }
+}
+
+void bm_memtest_watch_lists(int first, int last)
+{
+    cs_scope list_scope(Bm_list_lock);
+    bm_watch_lists_locked(first, last);
+}
+
+// memtest (OpenRFG64-memtest): Memtest.BmWriteWatch (memtest_ui.cpp): the address of the link field of the entry a
+// bitmap shows (its next offset, 4 bytes), for a hardware write watch; null when it shows none.
+void* bm_memtest_shown_next_field(int handle)
+{
+    if (Bm_bitmaps == nullptr || handle < 0 || handle >= Bm_entry_count)
+    {
+        return nullptr;
+    }
+    peg_entry* pe = Bm_bitmaps[handle].current_peg_entry;
+    return pe != nullptr ? (void*)&pe->next : nullptr;
+}
+
+// The name of the loaded peg whose entries hold p (memtest's write watch report).
+const char* bm_memtest_peg_of(const void* p)
+{
+    return bm_peg_name_of((const peg_entry*)p);
+}
+
 // OpenRFG: no bitmap may point into a peg once it is unloaded. An entry left in a bitmap's list (its unregister missed
 // it, or a list edit on the load thread raced one on the main thread) reads the next container's data once the stream
 // slot is reused. The campaign crash: the bitmap shown through such an entry read a garbage num_frames, bm_get_entry
@@ -1000,6 +1216,11 @@ static void bm_repair_entries_into(const unsigned char* lo, const unsigned char*
             if (logged++ < 200)
             {
                 GAME_TRACE("bmcheck", "peg %s unloaded: bitmap %d (%s) has an unreadable entry list", peg_name, handle, be->filename_ptr != nullptr ? be->filename_ptr : "-");
+            }
+            static int described = 0; // memtest: the first lists found unreadable, node by node
+            if (described++ < 12)
+            {
+                bm_describe_list(handle);
             }
         }
     }
