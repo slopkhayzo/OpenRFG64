@@ -5,7 +5,8 @@
 // temp, heap, debug and solver allocators the memory system wires in (hkFreeListMemorySystem::threadInit).
 //
 // easyAlloc and alignedAlloc put a 16-byte header in front of the block: the allocator at -16, the requested size at
-// -12 and, for aligned blocks, the offset back to the real block at -8. The free functions zero the allocator slot.
+// -12 and, for aligned blocks, the offset back to the real block at -8 (x64: the size at -8, the offset at -4, see
+// Header_size_at). The free functions zero the allocator slot.
 
 #include "volition/libmodules/havok/hk2014_2_5_r1/source/common/base/memory/router/hkmemoryrouter.h"
 
@@ -175,14 +176,33 @@ void hkMemoryRouter::setUserData(void* p)
     m_userData = p;
 }
 
+// The 16-byte header of an easy or aligned block: the allocator, the size, and for an aligned block the offset back to
+// the block's start. rfg.exe (32-bit) keeps them at +0, +4 and +8. x64: the allocator pointer takes 8 bytes, so the
+// size is at +8 and the offset at +12. With rfg.exe's offsets the pointer overwrote the size and the free read it back
+// as 0: every easy and aligned block (Havok's strings, its tagfile and packfile data, the broadphase markers) was freed
+// as 16 bytes, into the free list of 16-byte elements. After 20 minutes of a campaign that list held 587,880 free
+// elements of other lists' blocks against 512 of its own, and the garbage collection when the game left a level
+// crashed sorting it.
+namespace
+{
+#ifdef OPENRFG_X64
+const int Header_size_at = 8;
+const int Header_offset_at = 12;
+#else
+const int Header_size_at = 4;
+const int Header_offset_at = 8;
+#endif
+}
+
 // 0x00CE7690 (:42)
 void* hkMemoryRouter::alignedAlloc(hkMemoryAllocator& b, int nbytes, int alignment)
 {
     char* unaligned = (char*)b.blockAlloc(nbytes + alignment + 16); // 16: the header
     char* aligned = (char*)((uintptr_t)(unaligned + alignment + 15) & ~(uintptr_t)(alignment - 1));
-    *(int*)(aligned - 12) = nbytes + alignment;
-    *(hkMemoryAllocator**)(aligned - 16) = &b;
-    *(int*)(aligned - 8) = (int)(aligned - unaligned);
+    char* header = aligned - 16;
+    *(int*)(header + Header_size_at) = nbytes + alignment;
+    *(hkMemoryAllocator**)header = &b;
+    *(int*)(header + Header_offset_at) = (int)(aligned - unaligned);
     return aligned;
 }
 
@@ -192,24 +212,25 @@ void hkMemoryRouter::alignedFree(hkMemoryAllocator& b, void* p)
     if (p != nullptr)
     {
         char* aligned = (char*)p;
-        *(hkMemoryAllocator**)(aligned - 16) = nullptr;
-        b.blockFree(aligned - *(int*)(aligned - 8), *(int*)(aligned - 12) + 16);
+        char* header = aligned - 16;
+        *(hkMemoryAllocator**)header = nullptr;
+        b.blockFree(aligned - *(int*)(header + Header_offset_at), *(int*)(header + Header_size_at) + 16);
     }
 }
 
 // 0x00CE7700 (:74)
 void* hkMemoryRouter::easyAlloc(hkMemoryAllocator& b, int nbytes)
 {
-    int* header = (int*)b.blockAlloc(nbytes + 16);
-    header[1] = nbytes;
+    char* header = (char*)b.blockAlloc(nbytes + 16);
+    *(int*)(header + Header_size_at) = nbytes;
     *(hkMemoryAllocator**)header = &b;
-    return header + 4;
+    return header + 16;
 }
 
 // 0x00CE7730 (:82)
 unsigned int hkMemoryRouter::getEasyAllocSize(hkMemoryAllocator& b, const void* ptr)
 {
-    return *(const unsigned int*)((const char*)ptr - 12);
+    return *(const unsigned int*)((const char*)ptr - 16 + Header_size_at);
 }
 
 // 0x00CE7740 (:88)
@@ -225,7 +246,7 @@ void hkMemoryRouter::easyFree(hkMemoryAllocator& b, void* p)
     {
         char* block = (char*)p - 16;
         *(hkMemoryAllocator**)block = nullptr;
-        b.blockFree(block, *(int*)(block + 4) + 16);
+        b.blockFree(block, *(int*)(block + Header_size_at) + 16);
     }
 }
 
