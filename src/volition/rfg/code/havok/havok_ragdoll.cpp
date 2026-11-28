@@ -2406,6 +2406,95 @@ void havok_ragdoll_process_pre()
     }
 }
 
+// OpenRFG: joint stabilisation ("Source-style" stiff ragdolls). Havok's soft joint solver lets a ragdoll's bones pull
+// apart under heavy load (a vehicle on it, debris piles, big explosions). After every physics update each joint's two
+// pivots (the child's and the parent's, in the joints' own atoms) are compared; separation beyond RAGDOLL_JOINT_SLACK
+// is pushed back, mass-weighted between the two bodies, and the velocity that kept pulling them apart is cancelled.
+static float RAGDOLL_JOINT_SLACK = 0.02f; // metres of separation tolerated before the correction starts
+static const int RAGDOLL_JOINT_CHILD[11] = {0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}; // body each joint (constraints[i]) attaches
+static void ragdoll_joint_pivots(hkpConstraintInstance* ci, hkVector4f& pivot_a, hkVector4f& pivot_b)
+{
+    hkpConstraintData* data = ci->m_data;
+    const hkTransformf& ta = ci->m_entities[0]->m_motion.m_motionState.m_transform;
+    const hkTransformf& tb = ci->m_entities[1]->m_motion.m_motionState.m_transform;
+    hkVector4f la;
+    hkVector4f lb;
+    if (data->getType() == hkpConstraintData::CONSTRAINT_TYPE_LIMITEDHINGE)
+    {
+        hkpLimitedHingeConstraintData* d = (hkpLimitedHingeConstraintData*)data;
+        la = d->m_atoms.m_transforms.m_transformA.m_translation;
+        lb = d->m_atoms.m_transforms.m_transformB.m_translation;
+    }
+    else
+    {
+        hkpRagdollConstraintData* d = (hkpRagdollConstraintData*)data;
+        la = d->m_atoms.m_transforms.m_transformA.m_translation;
+        lb = d->m_atoms.m_transforms.m_transformB.m_translation;
+    }
+    pivot_a.setRotatedDir(ta.m_rotation, la);
+    pivot_a.add(ta.m_translation);
+    pivot_b.setRotatedDir(tb.m_rotation, lb);
+    pivot_b.add(tb.m_translation);
+}
+
+static void ragdoll_stabilize_joints(my_ragdoll& ragdoll)
+{
+    for (int pass = 0; pass < 2; pass++)
+    {
+        for (int i = 0; i < 11; i++)
+        {
+            hkpConstraintInstance* ci = ragdoll.constraints[i];
+            if (ci == nullptr || ci->m_entities[0] == nullptr || ci->m_entities[1] == nullptr)
+            {
+                continue;
+            }
+            hkpRigidBody* child = ragdoll.bodies[RAGDOLL_JOINT_CHILD[i]];
+            hkpRigidBody* parent = ragdoll.bodies[Ragdoll_rigid_body_parent_ids[RAGDOLL_JOINT_CHILD[i]]];
+            if (child == nullptr || parent == nullptr || (ci->m_entities[0] != child && ci->m_entities[1] != child))
+            {
+                continue;
+            }
+            hkVector4f pa;
+            hkVector4f pb;
+            ragdoll_joint_pivots(ci, pa, pb);
+            // err: from the parent's pivot to the child's pivot
+            const vector pc = ragdoll_vec3(ci->m_entities[0] == child ? pa : pb);
+            const vector pp = ragdoll_vec3(ci->m_entities[0] == child ? pb : pa);
+            vector err(pc.x - pp.x, pc.y - pp.y, pc.z - pp.z);
+            const float len = sqrtf(err.x * err.x + err.y * err.y + err.z * err.z);
+            if (len <= RAGDOLL_JOINT_SLACK || len > 50.0f)
+            {
+                continue;
+            }
+            const vector n(err.x / len, err.y / len, err.z / len);
+            const float fix = len - RAGDOLL_JOINT_SLACK;
+            const float mc = child->m_motion.getMass();
+            const float mp = parent->m_motion.getMass();
+            const float wc = mp / (mc + mp); // the lighter body moves more
+            const float wp = mc / (mc + mp);
+            hkVector4f c_pos;
+            c_pos.m_quad = _mm_setr_ps(child->m_motion.m_motionState.m_transform.m_translation.m_quad.m128_f32[0] - n.x * fix * wc, child->m_motion.m_motionState.m_transform.m_translation.m_quad.m128_f32[1] - n.y * fix * wc, child->m_motion.m_motionState.m_transform.m_translation.m_quad.m128_f32[2] - n.z * fix * wc, 0.0f);
+            hkVector4f p_pos;
+            p_pos.m_quad = _mm_setr_ps(parent->m_motion.m_motionState.m_transform.m_translation.m_quad.m128_f32[0] + n.x * fix * wp, parent->m_motion.m_motionState.m_transform.m_translation.m_quad.m128_f32[1] + n.y * fix * wp, parent->m_motion.m_motionState.m_transform.m_translation.m_quad.m128_f32[2] + n.z * fix * wp, 0.0f);
+            // the velocity still pulling them apart (along the error direction) is cancelled, mass-weighted
+            const vector vc = ragdoll_vec3(child->m_motion.getLinearVelocity());
+            const vector vp = ragdoll_vec3(parent->m_motion.getLinearVelocity());
+            const float rel = (vc.x - vp.x) * n.x + (vc.y - vp.y) * n.y + (vc.z - vp.z) * n.z;
+            child->setPosition(c_pos);
+            parent->setPosition(p_pos);
+            if (rel > 0.0f)
+            {
+                hkVector4f nvc;
+                nvc.m_quad = _mm_setr_ps(vc.x - n.x * rel * wc, vc.y - n.y * rel * wc, vc.z - n.z * rel * wc, 0.0f);
+                hkVector4f nvp;
+                nvp.m_quad = _mm_setr_ps(vp.x + n.x * rel * wp, vp.y + n.y * rel * wp, vp.z + n.z * rel * wp, 0.0f);
+                child->m_motion.setLinearVelocity(nvc);
+                parent->m_motion.setLinearVelocity(nvp);
+            }
+        }
+    }
+}
+
 // 0x00825C50 (:4353)
 // Detached limbs leave the world with their child body (arms 9/11 and 8/10, legs 5/7 and 4/6).
 void havok_ragdoll_process_post()
@@ -2422,6 +2511,10 @@ void havok_ragdoll_process_post()
         if (ragdoll->char_inst == nullptr || !ragdoll->added_to_world)
         {
             continue;
+        }
+        if (!ragdoll->sync_to_anim && ragdoll->add_constraints)
+        {
+            ragdoll_stabilize_joints(*ragdoll);
         }
         for (int l = 0; l < 4; l++)
         {
